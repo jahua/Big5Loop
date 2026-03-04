@@ -1,0 +1,454 @@
+{
+  "name": "CareLoop Phase1-2 PostgreSQL (Imported from MVP)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "careloop-turn",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "85dad42c-3c41-4ee9-8635-e1205b478301",
+      "name": "Webhook Trigger (POST Zurich)",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        -656,
+        -800
+      ],
+      "webhookId": "aba65e1e-4f3d-4d02-9728-cba45312e20f",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// \u2500\u2500 STEP 1: INGEST with robust UUID \u2500\u2500\nconst raw = $json.body || $json || {};\n\nfunction uuidV4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);\n  });\n}\n\nconst uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nconst sid = uuidRe.test(String(raw.session_id || '')) ? raw.session_id : uuidV4();\nconst directMsg = String(raw.message || '').trim();\nconst msgs = Array.isArray(raw.messages) ? raw.messages : [];\n\nlet userMessage = directMsg;\nlet assistantStart = '';\nif (!userMessage) {\n  for (const m of msgs) {\n    if (m?.role === 'user' && Number(m?.turn) === 2) userMessage = String(m?.content || '');\n    if (m?.role === 'assistant' && Number(m?.turn) === 1) assistantStart = String(m?.content || '');\n  }\n}\nif (!userMessage) userMessage = 'Hello, I could use some support today.';\nif (!assistantStart) assistantStart = \"I'm here to listen and support you. How are you feeling today?\";\n\nconst ctx = (raw.context && typeof raw.context === 'object') ? raw.context : {};\nconst turn = Number(raw.turn_index || 1);\n\nreturn [{ json: {\n  session_id: sid,\n  turn_index: turn,\n  clean_msg: userMessage,\n  user_message: userMessage,\n  assistant_start: assistantStart,\n  evaluation_mode: Boolean(raw.evaluation_mode),\n  api_request: Boolean(raw.api_request),\n  context: { language: String(ctx.language || 'en'), canton: String(ctx.canton || 'ZH').slice(0,2) },\n  conversation_context: `assistant: ${assistantStart}\\nuser: ${userMessage}`,\n  messages: msgs,\n  ingested_at: new Date().toISOString()\n}}];"
+      },
+      "id": "fde47042-70bc-46a9-aab4-670ac5d2d757",
+      "name": "Enhanced Ingest (Zurich)",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -432,
+        -896
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT turn_index,\n  COALESCE((ocean_json->>'O')::double precision, 0) AS ocean_o,\n  COALESCE((ocean_json->>'C')::double precision, 0) AS ocean_c,\n  COALESCE((ocean_json->>'E')::double precision, 0) AS ocean_e,\n  COALESCE((ocean_json->>'A')::double precision, 0) AS ocean_a,\n  COALESCE((ocean_json->>'N')::double precision, 0) AS ocean_n,\n  COALESCE((confidence_json->>'O')::double precision, 0.5) AS confidence_o,\n  COALESCE((confidence_json->>'C')::double precision, 0.5) AS confidence_c,\n  COALESCE((confidence_json->>'E')::double precision, 0.5) AS confidence_e,\n  COALESCE((confidence_json->>'A')::double precision, 0.5) AS confidence_a,\n  COALESCE((confidence_json->>'N')::double precision, 0.5) AS confidence_n,\n  stable\nFROM personality_states\nWHERE session_id = '{{ $json.session_id }}'\nORDER BY turn_index DESC LIMIT 1",
+        "options": {}
+      },
+      "id": "d45c19ac-ad01-4f8b-88e0-7e8e243d4ca6",
+      "name": "Load Previous State (PostgreSQL)",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        -208,
+        -896
+      ],
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "zULiG9zwfSRKW7IL",
+          "name": "CareLoop PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// \u2500\u2500 STEP 2: MERGE previous personality state (uses node references) \u2500\u2500\nlet ingestData = {};\ntry { ingestData = $('Enhanced Ingest (Zurich)').first().json; } catch(e) {}\nif (!ingestData || !ingestData.session_id) {\n  const all = $input.all();\n  for (const item of all) {\n    const j = item?.json;\n    if (j && j.conversation_context !== undefined) { ingestData = j; break; }\n  }\n  if (!ingestData || !ingestData.session_id) ingestData = $input.first()?.json || {};\n}\n\nlet dbRow = null;\ntry {\n  const dbOut = $('Load Previous State (PostgreSQL)').first()?.json;\n  if (dbOut && dbOut.ocean_o !== undefined) dbRow = dbOut;\n} catch(e) {}\nif (!dbRow) {\n  for (const item of $input.all()) {\n    const j = item?.json;\n    if (j && j.ocean_o !== undefined) { dbRow = j; break; }\n  }\n}\n\nlet prevOcean = {O:0,C:0,E:0,A:0,N:0}, prevConf = {O:0.5,C:0.5,E:0.5,A:0.5,N:0.5};\nlet prevTurn = 0, prevStable = false, fromDb = false;\nif (dbRow) {\n  prevOcean = {O:dbRow.ocean_o||0, C:dbRow.ocean_c||0, E:dbRow.ocean_e||0, A:dbRow.ocean_a||0, N:dbRow.ocean_n||0};\n  prevConf = {O:dbRow.confidence_o||0.5, C:dbRow.confidence_c||0.5, E:dbRow.confidence_e||0.5, A:dbRow.confidence_a||0.5, N:dbRow.confidence_n||0.5};\n  prevTurn = dbRow.turn_index||0; prevStable = dbRow.stable||false; fromDb = true;\n}\n\nreturn [{ json: {\n  ...ingestData,\n  previous_state: { ocean: prevOcean, confidence: prevConf, turn_index: prevTurn, stable: prevStable, loaded_from_db: fromDb }\n}}];"
+      },
+      "id": "75b16ef6-7a21-42fc-bf28-251ba66a0cf2",
+      "name": "Merge Previous State",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        16,
+        -896
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// \u2500\u2500 STEP 3: PERSONALITY DETECTION (fetch + heuristic fallback + EMA) \u2500\u2500\nconst d = $input.first().json;\nconst turnIndex = Number(d.turn_index || 1);\nconst userText = String(d.clean_msg || '').toLowerCase();\nconst convCtx = String(d.conversation_context || '');\n\nfunction clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }\n\nfunction heuristicOcean(text) {\n  const pos = (text.match(/(good|calm|grateful|thank|appreciate|better|hopeful|peace|relaxed|happy|great|awesome|wonderful|fantastic|love|enjoy|excited)/g)||[]).length;\n  const neg = (text.match(/(low|sad|anxious|worried|stress|overwhelmed|tired|panic|afraid|lonely|depressed|frustrated|angry|upset|hurt|scared|terrible|awful)/g)||[]).length;\n  const soc = (text.match(/(you|we|together|friends|family|talk|share|people|connect|relationship)/g)||[]).length;\n  const exp = (text.match(/(new|explore|learn|curious|idea|possibility|creative|wonder|imagine|discover)/g)||[]).length;\n  const str = (text.match(/(plan|organize|routine|schedule|step|priority|focus|goal|structure)/g)||[]).length;\n  const greet = (text.match(/(hi|hello|hey|how are you|good morning|good evening)/g)||[]).length;\n  return {\n    O: clamp(exp*0.15, -1, 1),\n    C: clamp(str*0.14, -1, 1),\n    E: clamp(soc*0.1 + pos*0.05 - neg*0.05 + greet*0.2, -1, 1),\n    A: clamp(pos*0.08 + soc*0.05 + greet*0.1, -1, 1),\n    N: clamp((neg-pos)*0.15, -1, 1)\n  };\n}\n\nfunction applyEma(current, conf) {\n  const alpha = 0.3;\n  const prev = d.previous_state || {};\n  const pO = prev.ocean || {O:0,C:0,E:0,A:0,N:0};\n  const pC = prev.confidence || {O:0.5,C:0.5,E:0.5,A:0.5,N:0.5};\n  const sO = {}, sC = {};\n  ['O','C','E','A','N'].forEach(t => {\n    sO[t] = turnIndex === 1 ? Number(current[t]||0) : alpha * Number(current[t]||0) + (1-alpha) * Number(pO[t]||0);\n    sC[t] = turnIndex === 1 ? Number(conf[t]||0.5) : alpha * Number(conf[t]||0.5) + (1-alpha) * Number(pC[t]||0.5);\n  });\n  const stable = turnIndex >= 5 && Object.values(sC).every(c => c >= 0.6);\n  return { smoothedOcean: sO, smoothedConfidence: sC, personalityStable: stable };\n}\n\nlet ocean, confidence, apiStatus = 'heuristic', apiError = null, formatUsed = 'heuristic-fallback';\n\ntry {\n  const apiKey = process.env.NVIDIA_API_KEY || '';\n  const apiUrl = process.env.NVIDIA_API_URL || 'https://integrate.api.nvidia.com/v1/chat/completions';\n  const model = process.env.NVIDIA_MODEL || 'google/gemma-3-12b-it';\n\n  if (apiKey && apiKey.length > 10) {\n    const prompt = `Analyze this text for OCEAN personality traits. Return ONLY JSON: {\"O\":float,\"C\":float,\"E\":float,\"A\":float,\"N\":float} (each -1.0 to 1.0).\\nText: \"${userText.slice(0,500)}\"`;\n    const resp = await fetch(apiUrl, {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },\n      body: JSON.stringify({ model, messages: [{role:'user',content:prompt}], temperature:0.3, max_tokens:100 })\n    });\n    if (resp.ok) {\n      const body = await resp.json();\n      const raw = body.choices?.[0]?.message?.content || '';\n      const m = raw.match(/\\{[^}]+\\}/);\n      if (m) {\n        const p = JSON.parse(m[0]);\n        if (typeof p.O === 'number') {\n          ocean = { O:clamp(p.O,-1,1), C:clamp(p.C||0,-1,1), E:clamp(p.E||0,-1,1), A:clamp(p.A||0,-1,1), N:clamp(p.N||0,-1,1) };\n          confidence = { O:0.7, C:0.7, E:0.7, A:0.7, N:0.7 };\n          apiStatus = 'nvidia'; formatUsed = 'api';\n        }\n      }\n    } else { apiError = `API ${resp.status}`; }\n  }\n} catch(e) { apiError = e.message; }\n\nif (!ocean) {\n  ocean = heuristicOcean(userText);\n  confidence = { O:0.45, C:0.45, E:0.45, A:0.45, N:0.45 };\n}\n\nconst ema = applyEma(ocean, confidence);\n\nreturn [{ json: {\n  ...d,\n  detector: {\n    api_status: apiStatus, error: apiError, format_used: formatUsed,\n    ocean_detected: ocean, smoothed_ocean: ema.smoothedOcean,\n    current_confidence: confidence, smoothed_confidence: ema.smoothedConfidence,\n    personality_stable: ema.personalityStable, ema_applied: true, ema_alpha: 0.3,\n    stabilization_turns: 5, turn_number: turnIndex, timestamp: new Date().toISOString()\n  },\n  ocean_disc: ema.smoothedOcean\n}}];"
+      },
+      "id": "9d9015ce-6b8b-4dec-9d24-ed782b575f17",
+      "name": "Zurich Model Detection (EMA)",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        240,
+        -896
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// \u2500\u2500 STEP 4: ZURICH REGULATION (directive mapping) \u2500\u2500\nconst d = $input.first().json;\nconst det = d.detector || {};\nconst ocean = det.smoothed_ocean || d.ocean_disc || {O:0,C:0,E:0,A:0,N:0};\nconst conf = det.smoothed_confidence || {};\nconst stable = det.personality_stable || false;\n\nconst MAP = {\n  O: { high:'Invite exploration and novelty', low:'Focus on familiar topics; reduce novelty' },\n  C: { high:'Provide organized, structured guidance', low:'Keep flexible, relaxed, and spontaneous' },\n  E: { high:'Maintain an energetic, sociable tone', low:'Adopt a calm, low-key style with reflective space' },\n  A: { high:'Show warmth, empathy, and collaboration', low:'Use a neutral, matter-of-fact stance' },\n  N: { high:'Offer extra comfort; acknowledge anxieties', low:'Reassure stability and confidence' }\n};\n\nconst directives = [];\nconst details = [];\nfor (const [t, v] of Object.entries(ocean)) {\n  const val = Number(v||0), c = Number(conf[t]||0.5);\n  if (Math.abs(val) > 0.15 && c >= 0.35) {\n    const dir = val > 0 ? MAP[t]?.high : MAP[t]?.low;\n    if (dir) {\n      directives.push(stable ? dir : `${dir} (confidence: ${c.toFixed(2)})`);\n      details.push({ trait:t, value:val, confidence:c, directive:dir });\n    }\n  }\n}\nif (directives.length === 0) {\n  directives.push('Be warm, attentive, and supportive');\n  directives.push('Ask open-ended questions to understand the user better');\n}\n\nreturn [{ json: {\n  ...d,\n  directives,\n  turn_text: d.clean_msg || d.user_message || '',\n  regulator: {\n    raw_directives: directives, zurich_applied: true,\n    confidence_weighted: !stable, regulation_status: 'success',\n    directive_count: directives.length, mapping_details: details,\n    input_ocean: ocean, input_confidence: conf,\n    timestamp: new Date().toISOString()\n  }\n}}];"
+      },
+      "id": "2629b770-1076-4b07-906d-18f17a15a66e",
+      "name": "Enhanced Regulation (Implemented)",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        464,
+        -896
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// \u2500\u2500 STEP 5: GENERATE RESPONSE (directive-aware heuristic + NVIDIA API) \u2500\u2500\nconst d = $input.first().json;\nconst text = String(d.turn_text || d.clean_msg || d.user_message || '').trim();\nconst ocean = d.ocean_disc || {O:0,C:0,E:0,A:0,N:0};\nconst directives = d.directives || [];\nconst stable = d.detector?.personality_stable || false;\n\nfunction pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }\n\nfunction extractTopics(text) {\n  const low = text.toLowerCase();\n  const topics = [];\n  const map = {\n    meditation: /(meditat|mindful|breathing exercise|zen|mantra)/,\n    exercise: /(exercise|workout|gym|running|walk|yoga|sport|swim|hik)/,\n    sleep: /(sleep|rest|nap|insomnia|tired|exhausted|bed)/,\n    work: /(work|job|office|boss|colleague|career|project|deadline)/,\n    family: /(family|parent|mother|father|mom|dad|sibling|brother|sister|child|kid)/,\n    friends: /(friend|buddy|pal|mate|companion|social)/,\n    health: /(health|doctor|hospital|sick|pain|illness|therapy|therapist)/,\n    nature: /(nature|garden|park|tree|flower|mountain|beach|ocean|outdoor)/,\n    creativity: /(creat|art|music|paint|writ|draw|sing|danc|cook|craft)/,\n    learning: /(learn|study|read|book|course|class|school)/,\n    gratitude: /(grateful|thankful|appreciate|blessed|gratitude)/,\n    calm: /(calm|peace|serene|tranquil|quiet|still|relax)/,\n    energy: /(energy|energetic|alive|vibrant|motivated|excited|pumped)/,\n    connection: /(connect|bond|relationship|love|close|together|belonging)/\n  };\n  for (const [t, re] of Object.entries(map)) { if (re.test(low)) topics.push(t); }\n  return topics;\n}\n\nfunction applyDirectiveStyle(base, directives, ocean) {\n  let r = base;\n  const ds = directives.join(' ').toLowerCase();\n  const E = Number(ocean.E||0), A = Number(ocean.A||0), N = Number(ocean.N||0);\n  const O = Number(ocean.O||0), C = Number(ocean.C||0);\n\n  let mods = 0;\n  // \u2500\u2500 Tone Prefixes: prepend a personality-matched opener \u2500\u2500\n  if (E > 0.4 && (ds.includes('energetic') || ds.includes('sociable'))) {\n    const ep = pick([\"I love that energy! \",\"That's so exciting! \",\"How wonderful! \",\"What great vibes! \",\"Yes, absolutely! \"]);\n    r = ep + r.charAt(0).toUpperCase() + r.slice(1);\n  } else if (E < -0.2) {\n    const qp = pick([\"I hear you. \",\"Take your time. \",\"There's no rush here. \",\"Let's sit with that for a moment. \"]);\n    if (!r.startsWith('I hear')) r = qp + r;\n  }\n\n  // \u2500\u2500 Warmth & Empathy (high A) \u2500\u2500\n  if (mods < 2 && A > 0.3 && (ds.includes('warmth') || ds.includes('empathy') || ds.includes('collaboration'))) {\n    r = r.replace(/\\bI\\b(?='d| think| believe| wonder)/g, 'We');\n    if (!r.includes('together') && !r.includes('we') && !r.includes('We'))\n      r = r.replace(/\\?$/, ' \u2014 and I want you to know we\\'re in this together?');\n    mods++;\n  }\n\n  // \u2500\u2500 Comfort & Anxiety support (high N or directive) \u2500\u2500\n  if (mods < 2 && N > 0.3 && (ds.includes('comfort') || ds.includes('anxiet'))) {\n    if (!r.includes('safe') && !r.includes('okay') && !r.includes('valid')) {\n      const cs = pick([\n        \" Remember, whatever you\\'re feeling right now is completely valid.\",\n        \" And it's okay to not have all the answers right now.\",\n        \" Your feelings matter, and there's no wrong way to feel about this.\",\n        \" Take a breath \u2014 you're doing better than you think.\"\n      ]);\n      r += cs;\n      mods++;\n    }\n  }\n\n  // \u2500\u2500 Reassure stability (low N) \u2500\u2500\n  if (mods < 2 && N < -0.3 && ds.includes('stability')) {\n    if (!r.includes('strong') && !r.includes('resilient'))\n      r = r.replace(/\\.$/, ' \u2014 and your steadiness really shines through.'); mods++;\n  }\n\n  // \u2500\u2500 Openness & Exploration (high O) \u2500\u2500\n  if (mods < 2 && O > 0.3 && (ds.includes('exploration') || ds.includes('novelty'))) {\n    if (!r.includes('curious') && !r.includes('explore') && !r.includes('perspective')) {\n      const os = pick([\n        \" What new perspective has this opened up for you?\",\n        \" I'm curious what else you might discover here.\",\n        \" Have you explored any unexpected angles on this?\"\n      ]);\n      r = r.replace(/\\?$/, '.') + os;\n    }\n  }\n\n  // \u2500\u2500 Conscientiousness / Structure (high C) \u2500\u2500\n  if (mods < 2 && C > 0.3 && (ds.includes('structured') || ds.includes('organized'))) {\n    if (!r.includes('step') && !r.includes('plan') && !r.includes('concrete')) {\n      const cs = pick([\n        \" Shall we break this down into concrete steps?\",\n        \" Would it help to organize your thoughts around this?\",\n        \" Let's approach this systematically \u2014 what's the first priority?\"\n      ]);\n      r = r.replace(/\\?$/, '.') + cs;\n    }\n  }\n\n  // \u2500\u2500 Energetic punctuation and word swaps \u2500\u2500\n  if (E > 0.3 && (ds.includes('energetic') || ds.includes('sociable'))) {\n    r = r.replace(/\\.\\s/g, '! ').replace(/\\.$/, '!');\n    r = r.replace(/\\bgood\\b/gi, m => pick(['great','wonderful','fantastic']));\n    r = r.replace(/\\bnice\\b/gi, m => pick(['amazing','lovely','brilliant']));\n  }\n\n  // \u2500\u2500 Calm / reflective tone (low E directive) \u2500\u2500\n  if (ds.includes('calm') || ds.includes('low-key') || ds.includes('reflective space')) {\n    r = r.replace(/!/g, '.').replace(/!$/,'.');\n    if (!r.includes('space') && !r.includes('pause'))\n      r += \" Take all the space you need.\";\n  }\n\n  // \u2500\u2500 Matter-of-fact (low A) \u2500\u2500\n  if (A < -0.2 && (ds.includes('neutral') || ds.includes('matter-of-fact'))) {\n    r = r.replace(/!\\s?/g, '. ').replace(/!$/, '.');\n    r = r.replace(/\\breally\\s/gi, '').replace(/\\btruly\\s/gi, '').replace(/\\bso\\s/gi, '');\n  }\n\n  return r;\n}\n\nfunction heuristicResponse(text, ocean, directives) {\n  const low = text.toLowerCase();\n  const E = Number(ocean.E||0), A = Number(ocean.A||0), N = Number(ocean.N||0), O = Number(ocean.O||0);\n  const topics = extractTopics(text);\n  const isGreeting = /(^|\\s)(hi|hello|hey|how are you|what's up|good morning|good evening)/i.test(low) && text.length < 40;\n  const isPositive = /(good|calm|great|happy|better|peace|grateful|appreciate|wonderful|fantastic|awesome|excited|love|enjoy)/i.test(low);\n  const isNegative = /(low|sad|overwhelmed|anxious|stressed|tired|worried|afraid|depressed|frustrated|angry|upset|hurt|lonely|terrible|awful)/i.test(low);\n  const isQuestion = /\\?/.test(text);\n  const isReflective = /(think|wonder|reflect|meaning|purpose|life|feel like|sometimes|realize|understand|aware)/i.test(low);\n  const isAdvice = /(best way|should|recommend|suggest|how to|tip|advice|help me)/i.test(low);\n  const isSharing = text.length > 80;\n\n  if (isGreeting) {\n    return applyDirectiveStyle(pick([\n      E > 0.3 ? 'Hey there! Great to hear from you! How has your day been going? Anything on your mind you\\'d like to chat about?' : A > 0.2 ? 'Hello! It\\'s really nice to connect with you. How are you doing today? I\\'m here whenever you\\'re ready to share.' : 'Hi! Welcome \u2014 I\\'m glad you\\'re here. How are things going for you today?',\n      'Hey! Good to see you. What\\'s been on your mind lately?',\n      E > 0.3 ? 'Hi there! Always nice to connect. What brings you here today?' : 'Hello. I\\'m here and listening. What would you like to talk about?'\n    ]), directives, ocean);\n  }\n\n  if (isAdvice && topics.length > 0) {\n    const t = topics[0];\n    const topicR = {\n      meditation: ['It sounds like you already have great insight \u2014 meditation really can be transformative. How long have you been practicing? I\\'d love to hear about your experience.', 'You\\'re absolutely right that meditation can be incredibly grounding. What type resonates most with you \u2014 guided, breath-focused, or something else?', 'That\\'s a wonderful practice. Meditation has such deep benefits for both mind and body. Do you have a regular routine, or is it more spontaneous?'],\n      exercise: ['Movement really is such a powerful way to shift your energy. What kind of exercise do you find most enjoyable?', 'You\\'re onto something important \u2014 physical activity can be one of the best things for our wellbeing. What type works best for you?'],\n      sleep: ['Rest is so fundamental to how we feel and function. What\\'s your relationship with sleep been like recently?', 'Good sleep really is the foundation of wellbeing. What does your wind-down routine look like?'],\n      nature: ['Being in nature really does have a special way of grounding us. What kinds of natural settings do you find most restorative?', 'There\\'s something deeply healing about connecting with the natural world. Do you get to spend time outdoors regularly?']\n    };\n    return applyDirectiveStyle(pick(topicR[t] || [`That's a really insightful perspective on ${t}. What made you realize this?`, `You seem to have a thoughtful approach to ${t}. How has it shaped your daily life?`]), directives, ocean);\n  }\n\n  if (isNegative) {\n    const emp = pick([`I hear you, and it takes real courage to share when things feel heavy.`, `Thank you for being open about how you're feeling \u2014 that truly matters.`, `I can sense this is weighing on you, and I want you to know your feelings are completely valid.`, `It sounds like you're carrying a lot right now. I'm here to listen.`]);\n    const sup = N < -0.2 ? pick([`You don't have to navigate this alone.`, `Whatever you're going through, we can face it together at your pace.`, `Sometimes just having someone to listen can make things feel lighter.`]) : pick([`Let's take this one step at a time together.`, `I'm here to support you through this.`, `We can work through this \u2014 there's no rush.`]);\n    const fol = topics.length > 0 ? pick([`Can you tell me more about how ${topics[0]} has been affecting you?`, `What aspect of ${topics[0]} has been the most challenging?`]) : pick([`Can you tell me more about what's been weighing on you?`, `What feels like the heaviest part of what you're experiencing?`, `When did you first start feeling this way?`]);\n    return applyDirectiveStyle(`${emp} ${sup} ${fol}`, directives, ocean);\n  }\n\n  if (isPositive) {\n    if (topics.length > 0) {\n      const tR = {\n        calm: ['There\\'s something really beautiful about finding that inner calm. It\\'s not always easy to get there, so the fact that you\\'re feeling it is worth celebrating. What\\'s been helping you cultivate that sense of peace?', 'Feeling calm is such a gift to yourself. Is this a feeling you\\'ve been actively working toward, or did it come naturally today?', 'That sense of calm sounds really grounding. What does it feel like in your body when you notice that stillness?'],\n        meditation: ['It sounds like your meditation practice is really paying off! That calm energy you\\'re describing is exactly what consistent practice can bring. How has your practice evolved over time?', 'The peace that comes from meditation is so unique \u2014 like a calm from within rather than from circumstances. What drew you to meditation initially?'],\n        gratitude: ['That spirit of gratitude you\\'re expressing is really powerful. Research shows that noticing what we\\'re thankful for literally rewires the brain toward positivity. What are you most grateful for today?', 'I love that you\\'re in a space of appreciation right now. What\\'s been standing out to you lately?'],\n        energy: ['I can really feel that energy coming through! There\\'s something contagious about that kind of vitality. What\\'s been fueling it?', 'That vibrant energy is wonderful. What\\'s been driving that motivation?'],\n        connection: ['Those deep connections really are what make life rich. What\\'s been the most meaningful connection for you recently?', 'The desire for meaningful connection is so important. What kind of connections nourish you most?']\n      };\n      if (tR[topics[0]]) return applyDirectiveStyle(pick(tR[topics[0]]), directives, ocean);\n    }\n    return applyDirectiveStyle(pick([`That's really wonderful to hear! What's been the highlight of this positive energy for you?`, `I can sense that good energy in what you're sharing! What do you think is contributing most to this feeling?`, `It sounds like you're in a really good headspace. Those moments are worth savoring. Is there something specific that shifted things for you?`, `What a great place to be in! I'm curious about what's been different lately.`, `That positivity really comes through in your words. What would you say has been the biggest factor?`]), directives, ocean);\n  }\n\n  if (isSharing) {\n    return applyDirectiveStyle(pick([`Thank you for sharing all of that \u2014 I can tell this is something you've been thinking deeply about.${topics.length > 0 ? ` The way you describe ${topics[0]} really resonates.` : ''} What feels most important to you in all of this?`, `I really appreciate you opening up. There's a lot of depth in what you're saying.${topics.length > 0 ? ` I'm particularly struck by what you said about ${topics[0]}.` : ''} What part would you like to explore further?`]), directives, ocean);\n  }\n\n  if (isReflective) {\n    return applyDirectiveStyle(pick([`Those are really thoughtful reflections. That kind of self-awareness is genuinely valuable.${topics.length > 0 ? ` What specifically about ${topics[0]} has been on your mind?` : ' What drew you to think about this?'}`, `I love that you're sitting with these deeper questions. What has this reflection been revealing to you?`, `There's something really meaningful about taking the time to reflect like this. What insights have been coming up for you?`]), directives, ocean);\n  }\n\n  if (isQuestion) {\n    return applyDirectiveStyle(pick([`That's a really thoughtful question.${topics.length > 0 ? ` When it comes to ${topics[0]}, ` : ' '}What's your own intuition telling you?`, `Great question! I'd love to explore that with you. What's been prompting you to think about this?`, `I appreciate you asking that. What's your gut feeling on it?`]), directives, ocean);\n  }\n\n  return applyDirectiveStyle(pick([`Thanks for sharing that.${topics.length > 0 ? ` I'd like to hear more about your experience with ${topics[0]}.` : ''} What feels most important to talk about right now?`, `I appreciate you opening up.${topics.length > 0 ? ` ${topics[0].charAt(0).toUpperCase()+topics[0].slice(1)} sounds meaningful to you.` : ''} Tell me more.`, `That's interesting \u2014 I'd like to understand more.${topics.length > 0 ? ` How has ${topics[0]} been part of your experience?` : ' What would be most helpful to explore together?'}`, `I hear you. What you're sharing matters.${topics.length > 0 ? ` Let's talk more about ${topics[0]} \u2014 ` : ' '}What aspect would you like to dive deeper into?`]), directives, ocean);\n}\n\nlet reply = '', genStatus = 'heuristic', genError = null;\n\ntry {\n  const apiKey = process.env.NVIDIA_API_KEY || '';\n  const apiUrl = process.env.NVIDIA_API_URL || 'https://integrate.api.nvidia.com/v1/chat/completions';\n  const model = process.env.NVIDIA_MODEL || 'google/gemma-3-12b-it';\n\n  if (apiKey && apiKey.length > 10) {\n    const sysPrompt = `You are CareLoop, a supportive, personality-aware caregiver assistant.\\n\\nStyle directives:\\n${directives.map((x,i)=>`${i+1}. ${x}`).join('\\n')}\\n\\nRules: 2-4 sentences, reference what the user said, be genuine, ask one follow-up question, never start with 'I appreciate you sharing'.`;\n    const resp = await fetch(apiUrl, {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },\n      body: JSON.stringify({ model, messages: [{role:'system',content:sysPrompt},{role:'user',content:text}], temperature: stable ? 0.6 : 0.7, max_tokens: 200 })\n    });\n    if (resp.ok) {\n      const body = await resp.json();\n      const c = body.choices?.[0]?.message?.content;\n      if (c && c.length > 10) { reply = c; genStatus = 'nvidia'; }\n    } else { genError = `API ${resp.status}`; }\n  }\n} catch(e) { genError = e.message; }\n\nif (!reply) reply = heuristicResponse(text, ocean, directives);\n\nreturn [{ json: {\n  ...d,\n  reply: reply,\n  generator: {\n    raw_content: reply, api_status: genStatus, error: genError,\n    format_used: genStatus === 'nvidia' ? 'api' : 'heuristic-fallback',\n    directives_applied: directives, personality_stable: stable,\n    user_input: text, generation_config: { temperature: stable ? 0.6 : 0.7, max_tokens: 200, model: process.env.NVIDIA_MODEL || 'google/gemma-3-12b-it' },\n    ready_for_verification: true, topics_detected: extractTopics(text),\n    timestamp: new Date().toISOString()\n  },\n  choices: [{ message: { content: reply } }]\n}}];"
+      },
+      "id": "ce2867cc-2673-4e8d-8303-2db798973d04",
+      "name": "Enhanced Generation (Implemented)",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        688,
+        -896
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// \u2500\u2500 STEP 6: VERIFICATION \u2500\u2500\nconst d = $input.first()?.json || {};\nconst draft = d.generator?.raw_content || d.reply || d.choices?.[0]?.message?.content || 'No response generated';\nconst directives = d.directives || [];\n\nconst qCount = (draft.match(/\\?/g)||[]).length;\nconst wCount = draft.split(/\\s+/).length;\nconst claims = ['research shows','studies indicate','experts say','according to','science shows','data suggests'];\nlet score = 0.8;\nconst issues = [];\nif (qCount > 2) { issues.push(`Too many questions (${qCount})`); score -= 0.1; }\nif (wCount < 15 || wCount > 200) { issues.push(`Word count ${wCount} outside range`); score -= 0.1; }\nfor (const c of claims) { if (draft.toLowerCase().includes(c)) { issues.push(`Novel claim: \"${c}\"`); score -= 0.2; } }\n\nlet finalReply = draft;\nif (score < 0.6) {\n  finalReply = draft.replace(/research shows|studies indicate|experts say|according to/gi, 'from my understanding');\n}\n\nreturn [{ json: {\n  ...d,\n  reply: finalReply,\n  choices: [{ message: { content: finalReply } }],\n  verifier: {\n    verification_status: score >= 0.6 ? 'verified' : 'refined',\n    adherence_score: score, issues_identified: issues,\n    verified_response: finalReply, original_response: draft,\n    timestamp: new Date().toISOString()\n  }\n}}];"
+      },
+      "id": "e0ff7006-055e-4001-be31-ce3860a09fb6",
+      "name": "Verification & Refinement (Implemented)",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        912,
+        -896
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// \u2500\u2500 STEP 7: FORMAT FINAL RESPONSE for webhook \u2500\u2500\nconst d = $input.first().json;\n\nreturn [{ json: {\n  session_id: d.session_id || '',\n  message: {\n    role: 'assistant',\n    content: d.reply || d.verifier?.verified_response || d.generator?.raw_content || 'How can I help you today?',\n    timestamp: new Date().toISOString()\n  },\n  personality_state: {\n    ocean: d.detector?.smoothed_ocean || d.ocean_disc || {O:0,C:0,E:0,A:0,N:0},\n    stable: d.detector?.personality_stable || false,\n    confidence: d.detector?.smoothed_confidence || {},\n    ema_applied: d.detector?.ema_applied || false\n  },\n  regulation: {\n    directives: d.directives || [],\n    zurich_applied: d.regulator?.zurich_applied || false\n  },\n  pipeline_status: {\n    detector: d.detector?.api_status || 'unknown',\n    generator: d.generator?.api_status || 'unknown',\n    verifier: d.verifier?.verification_status || 'unknown'\n  },\n  debug: {\n    detection_error: d.detector?.error || null,\n    generation_error: d.generator?.error || null,\n    topics_detected: d.generator?.topics_detected || [],\n    turn_index: d.turn_index || 1\n  },\n  coaching_mode: 'emotional_support'\n}}];"
+      },
+      "id": "fmt-resp-mvp-001",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1136,
+        -800
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "46cd8193-d10e-48a4-aed4-f27f9ef2e2a6",
+      "name": "Return API Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        1360,
+        -800
+      ],
+      "typeVersion": 1.1
+    },
+    {
+      "parameters": {
+        "jsCode": "// \u2500\u2500 DB PREP: Ensure valid UUID before saves \u2500\u2500\nconst d = $input.first().json;\nconst raw = String(d.session_id || '').trim();\nconst re = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nfunction uuidV4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);\n  });\n}\nreturn [{ json: { ...d, safe_session_id: re.test(raw) ? raw : uuidV4() } }];"
+      },
+      "id": "ensure-session-uuid",
+      "name": "Ensure Session UUID",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1136,
+        -1040
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO chat_sessions (session_id, status, locale, canton)\nVALUES ('{{ $json.safe_session_id }}'::uuid, 'active', '{{ $json.context?.language || \"en\" }}', '{{ ($json.context?.canton || \"ZH\").slice(0,2) }}')\nON CONFLICT (session_id) DO UPDATE SET status = 'active', locale = EXCLUDED.locale, canton = EXCLUDED.canton",
+        "options": {}
+      },
+      "id": "5fab0eb5-5b7e-4d31-a386-1301e64efa79",
+      "name": "Save Session (PostgreSQL)",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        1360,
+        -1184
+      ],
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "zULiG9zwfSRKW7IL",
+          "name": "CareLoop PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO conversation_turns (session_id, turn_index, user_msg, assistant_msg, mode, latency_ms)\nVALUES ('{{ $json.safe_session_id }}'::uuid, {{ $json.turn_index || 1 }}, $${{ $json.clean_msg || $json.user_message || '' }}$$, $${{ $json.reply || $json.verifier?.verified_response || '' }}$$, '{{ $json.coaching_mode || \"emotional_support\" }}', NULL)\nON CONFLICT (session_id, turn_index) DO UPDATE SET assistant_msg = EXCLUDED.assistant_msg, mode = EXCLUDED.mode",
+        "options": {}
+      },
+      "id": "d7f1a58e-2c73-4ae9-9095-452285d09846",
+      "name": "Save Conversation Turn (PostgreSQL)",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        1360,
+        -992
+      ],
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "zULiG9zwfSRKW7IL",
+          "name": "CareLoop PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO personality_states (session_id, turn_index, ocean_json, confidence_json, stable, ema_alpha)\nVALUES ('{{ $json.safe_session_id }}'::uuid, {{ $json.turn_index || 1 }},\n  jsonb_build_object('O',{{ $json.detector?.smoothed_ocean?.O || 0 }},'C',{{ $json.detector?.smoothed_ocean?.C || 0 }},'E',{{ $json.detector?.smoothed_ocean?.E || 0 }},'A',{{ $json.detector?.smoothed_ocean?.A || 0 }},'N',{{ $json.detector?.smoothed_ocean?.N || 0 }}),\n  jsonb_build_object('O',{{ $json.detector?.smoothed_confidence?.O || 0.5 }},'C',{{ $json.detector?.smoothed_confidence?.C || 0.5 }},'E',{{ $json.detector?.smoothed_confidence?.E || 0.5 }},'A',{{ $json.detector?.smoothed_confidence?.A || 0.5 }},'N',{{ $json.detector?.smoothed_confidence?.N || 0.5 }}),\n  {{ $json.detector?.personality_stable ? 'true' : 'false' }}, {{ $json.detector?.ema_alpha || 0.3 }})\nON CONFLICT (session_id, turn_index) DO UPDATE SET ocean_json=EXCLUDED.ocean_json, confidence_json=EXCLUDED.confidence_json, stable=EXCLUDED.stable",
+        "options": {}
+      },
+      "id": "878ae901-a26b-44d4-abe1-f534fa65b3eb",
+      "name": "Save Personality State (PostgreSQL)",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        1360,
+        -608
+      ],
+      "typeVersion": 2.4,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": {
+          "id": "zULiG9zwfSRKW7IL",
+          "name": "CareLoop PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Phase 1-2 PostgreSQL Workflow (Fixed)\n\n**Architecture:**\n- Linear pipeline: Ingest \u2192 Load State \u2192 Merge \u2192 Detect \u2192 Regulate \u2192 Generate \u2192 Verify\n- Response returns IMMEDIATELY after Verify\n- DB saves are fire-and-forget side branch\n- All DB nodes have onError: continueRegularOutput\n- Uses fetch() instead of this.helpers.httpRequest\n- Directive-aware heuristic fallback with topic detection",
+        "height": 300,
+        "width": 496
+      },
+      "id": "7fa552da-868b-463e-8df5-f569b7e3f402",
+      "name": "PostgreSQL Info",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -368,
+        -1968
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "session_id_field",
+              "name": "session_id",
+              "type": "string",
+              "value": "550e8400-e29b-41d4-a716-446655440002"
+            },
+            {
+              "id": "turn_index_field",
+              "name": "turn_index",
+              "type": "number",
+              "value": 1
+            },
+            {
+              "id": "message_field",
+              "name": "message",
+              "type": "string",
+              "value": "I feel really overwhelmed with work. There's so much to do and I don't know where to start."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "82301bf5-2b0a-43b1-8d9d-b3e0b50d57e6",
+      "name": "Edit Fields",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        -656,
+        -992
+      ],
+      "typeVersion": 3.4
+    },
+    {
+      "parameters": {},
+      "id": "41d26287-0460-4c3a-8a04-a733a16bc21b",
+      "name": "When clicking 'Execute workflow'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [
+        -880,
+        -992
+      ],
+      "typeVersion": 1
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Trigger (POST Zurich)": {
+      "main": [
+        [
+          {
+            "node": "Enhanced Ingest (Zurich)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enhanced Ingest (Zurich)": {
+      "main": [
+        [
+          {
+            "node": "Load Previous State (PostgreSQL)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge Previous State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Previous State (PostgreSQL)": {
+      "main": [
+        [
+          {
+            "node": "Merge Previous State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Previous State": {
+      "main": [
+        [
+          {
+            "node": "Zurich Model Detection (EMA)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zurich Model Detection (EMA)": {
+      "main": [
+        [
+          {
+            "node": "Enhanced Regulation (Implemented)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enhanced Regulation (Implemented)": {
+      "main": [
+        [
+          {
+            "node": "Enhanced Generation (Implemented)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enhanced Generation (Implemented)": {
+      "main": [
+        [
+          {
+            "node": "Verification & Refinement (Implemented)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verification & Refinement (Implemented)": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Ensure Session UUID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Return API Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Session UUID": {
+      "main": [
+        [
+          {
+            "node": "Save Session (PostgreSQL)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save Conversation Turn (PostgreSQL)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save Personality State (PostgreSQL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking 'Execute workflow'": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Enhanced Ingest (Zurich)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {},
+  "tags": []
+}

@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Env and secrets – never commit
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Build and runtime
+dist/
+.next/
+*.log

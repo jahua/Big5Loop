@@ -1,0 +1,12 @@
+# CareLoop Next.js app – runs in Docker alongside db + n8n
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY apps/web/package.json ./
+RUN npm install
+
+COPY apps/web ./
+EXPOSE 3000
+ENV NODE_ENV=development
+CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]

@@ -1,0 +1,153 @@
+[{
+  "id": "careloop_simple_v1",
+  "name": "CareLoop Simplified Pipeline",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "careloop-turn",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-simple-001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [200, 400],
+      "webhookId": "simple-careloop-0001-4001-8001-000000000001",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── STEP 1: INGEST ──\nconst raw = $json.body || $json || {};\n\nfunction uuidV4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);\n  });\n}\n\nconst uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\nconst sid = uuidRe.test(String(raw.session_id || '')) ? raw.session_id : uuidV4();\nconst msg = String(raw.message || raw.clean_msg || '').trim() || 'Hello';\nconst turn = Number(raw.turn_index || 1);\n\nreturn [{ json: {\n  session_id: sid,\n  turn_index: turn,\n  user_message: msg,\n  context: raw.context || { language: 'en', canton: 'ZH' },\n  ingested_at: new Date().toISOString()\n}}];"
+      },
+      "id": "ingest-001",
+      "name": "Ingest",
+      "type": "n8n-nodes-base.code",
+      "position": [400, 400],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── STEP 2: PERSONALITY DETECTION (Heuristic + NVIDIA API fallback) ──\nconst d = $input.first().json;\nconst text = String(d.user_message || '').toLowerCase();\n\nfunction clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }\n\nfunction heuristicOcean(text) {\n  let O = 0, C = 0, E = 0, A = 0, N = 0;\n  const pos = (text.match(/(good|calm|grateful|thank|appreciate|better|hopeful|peace|relaxed|happy|great|awesome|wonderful|fantastic|love|enjoy|excited)/g) || []).length;\n  const neg = (text.match(/(low|sad|anxious|worried|stress|overwhelmed|tired|panic|afraid|lonely|depressed|frustrated|angry|upset|hurt|scared|terrible|awful|horrible)/g) || []).length;\n  const soc = (text.match(/(you|we|together|friends|family|talk|share|people|connect|relationship)/g) || []).length;\n  const exp = (text.match(/(new|explore|learn|curious|idea|possibility|creative|wonder|imagine|discover)/g) || []).length;\n  const str = (text.match(/(plan|organize|routine|schedule|step|priority|focus|goal|structure|discipline)/g) || []).length;\n  const greet = (text.match(/(hi|hello|hey|how are you|what's up|good morning|good evening)/g) || []).length;\n\n  N = clamp((neg - pos) * 0.15, -0.8, 0.8);\n  E = clamp((soc * 0.1) + (pos * 0.05) - (neg * 0.05) + (greet * 0.2), -0.7, 0.7);\n  A = clamp((pos * 0.08) + (soc * 0.05) + (greet * 0.1), -0.5, 0.8);\n  O = clamp(exp * 0.15, -0.3, 0.8);\n  C = clamp(str * 0.14, -0.4, 0.8);\n\n  return { O: clamp(O,-1,1), C: clamp(C,-1,1), E: clamp(E,-1,1), A: clamp(A,-1,1), N: clamp(N,-1,1) };\n}\n\nlet ocean = heuristicOcean(text);\nlet apiStatus = 'heuristic';\nlet apiError = null;\n\n// Try NVIDIA API if available\ntry {\n  const apiKey = process.env.NVIDIA_API_KEY || '';\n  const apiUrl = process.env.NVIDIA_API_URL || 'https://integrate.api.nvidia.com/v1/chat/completions';\n  const model = process.env.NVIDIA_MODEL || 'google/gemma-3-12b-it';\n\n  if (apiKey && apiKey.length > 10) {\n    const prompt = `Analyze this text for OCEAN personality traits. Return ONLY a JSON object with keys O, C, E, A, N (each -1.0 to 1.0).\\nText: \"${text.slice(0, 500)}\"`;\n    const resp = await fetch(apiUrl, {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },\n      body: JSON.stringify({ model, messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: 100 })\n    });\n    if (resp.ok) {\n      const body = await resp.json();\n      const raw = body.choices?.[0]?.message?.content || '';\n      const m = raw.match(/\\{[^}]+\\}/);\n      if (m) {\n        const parsed = JSON.parse(m[0]);\n        if (typeof parsed.O === 'number') {\n          ocean = { O: clamp(parsed.O,-1,1), C: clamp(parsed.C||0,-1,1), E: clamp(parsed.E||0,-1,1), A: clamp(parsed.A||0,-1,1), N: clamp(parsed.N||0,-1,1) };\n          apiStatus = 'nvidia';\n        }\n      }\n    } else {\n      apiError = `API ${resp.status}`;\n    }\n  }\n} catch (e) {\n  apiError = e.message;\n}\n\nreturn [{ json: {\n  ...d,\n  ocean: ocean,\n  detection: {\n    api_status: apiStatus,\n    error: apiError,\n    ocean: ocean,\n    confidence: { O: 0.5, C: 0.5, E: 0.5, A: 0.5, N: 0.5 }\n  }\n}}];"
+      },
+      "id": "detect-001",
+      "name": "Detect Personality",
+      "type": "n8n-nodes-base.code",
+      "position": [600, 400],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── STEP 3: REGULATION (Zurich Model mapping) ──\nconst d = $input.first().json;\nconst ocean = d.ocean || { O:0, C:0, E:0, A:0, N:0 };\n\nconst promptMap = {\n  O: { high: 'Invite exploration and novelty', low: 'Focus on familiar topics; reduce novelty' },\n  C: { high: 'Provide organized, structured guidance', low: 'Keep flexible, relaxed, and spontaneous' },\n  E: { high: 'Maintain an energetic, sociable tone', low: 'Adopt a calm, low-key style with reflective space' },\n  A: { high: 'Show warmth, empathy, and collaboration', low: 'Use a neutral, matter-of-fact stance' },\n  N: { high: 'Reassure stability and confidence', low: 'Offer extra comfort; acknowledge anxieties' }\n};\n\nconst directives = [];\nfor (const [trait, val] of Object.entries(ocean)) {\n  if (Math.abs(val) > 0.1) {\n    const dir = val > 0 ? promptMap[trait]?.high : promptMap[trait]?.low;\n    if (dir) directives.push(dir);\n  }\n}\n\nif (directives.length === 0) {\n  directives.push('Be warm, attentive, and supportive');\n  directives.push('Ask open-ended questions to understand the user better');\n}\n\nreturn [{ json: {\n  ...d,\n  directives: directives,\n  regulation: {\n    directive_count: directives.length,\n    zurich_applied: true\n  }\n}}];"
+      },
+      "id": "regulate-001",
+      "name": "Regulate Response",
+      "type": "n8n-nodes-base.code",
+      "position": [800, 400],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── STEP 4: GENERATE RESPONSE (Directive-aware heuristic + NVIDIA API) ──\nconst d = $input.first().json;\nconst text = String(d.user_message || '').trim();\nconst ocean = d.ocean || { O:0, C:0, E:0, A:0, N:0 };\nconst directives = d.directives || [];\n\nfunction pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }\n\nfunction extractTopics(text) {\n  const low = text.toLowerCase();\n  const topics = [];\n  const topicMap = {\n    meditation: /(meditat|mindful|breathing exercise|zen|mantra)/,\n    exercise: /(exercise|workout|gym|running|walk|yoga|sport|swim|hik)/,\n    sleep: /(sleep|rest|nap|insomnia|tired|exhausted|bed)/,\n    work: /(work|job|office|boss|colleague|career|project|deadline)/,\n    family: /(family|parent|mother|father|mom|dad|sibling|brother|sister|child|kid|son|daughter)/,\n    friends: /(friend|buddy|pal|mate|companion|social)/,\n    health: /(health|doctor|hospital|sick|pain|illness|therapy|therapist|medication)/,\n    nature: /(nature|garden|park|tree|flower|mountain|beach|ocean|river|outdoor)/,\n    creativity: /(creat|art|music|paint|writ|draw|sing|danc|cook|craft)/,\n    learning: /(learn|study|read|book|course|class|school|university)/,\n    gratitude: /(grateful|thankful|appreciate|blessed|gratitude)/,\n    calm: /(calm|peace|serene|tranquil|quiet|still|relax)/,\n    energy: /(energy|energetic|alive|vibrant|motivated|excited|pumped)/,\n    connection: /(connect|bond|relationship|love|close|together|belonging)/\n  };\n  for (const [topic, regex] of Object.entries(topicMap)) {\n    if (regex.test(low)) topics.push(topic);\n  }\n  return topics;\n}\n\nfunction applyDirectiveStyle(base, directives, ocean) {\n  let result = base;\n  const E = Number(ocean.E || 0);\n  const A = Number(ocean.A || 0);\n  const N = Number(ocean.N || 0);\n  const O = Number(ocean.O || 0);\n  const C = Number(ocean.C || 0);\n  const dStr = directives.join(' ').toLowerCase();\n\n  if (dStr.includes('energetic') || dStr.includes('sociable')) {\n    result = result.replace(/\\.$/, '!').replace(/^(I |That |It )/, (m) => m);\n  }\n  if (dStr.includes('comfort') || dStr.includes('anxiet') || N < -0.2) {\n    if (!result.includes('safe') && !result.includes('here for you')) {\n      result += ' Know that this is a safe space, and I\\'m here for you.';\n    }\n  }\n  if ((dStr.includes('exploration') || dStr.includes('novelty') || O > 0.3) && !result.includes('curious') && !result.includes('explore')) {\n    result += ' I\\'m curious to explore this further with you.';\n  }\n  if ((dStr.includes('structured') || dStr.includes('organized') || C > 0.3) && !result.includes('step')) {\n    result += ' Would it help to think about this step by step?';\n  }\n  return result;\n}\n\nfunction heuristicResponse(text, ocean, directives) {\n  const low = text.toLowerCase();\n  const E = Number(ocean.E || 0);\n  const A = Number(ocean.A || 0);\n  const N = Number(ocean.N || 0);\n  const O = Number(ocean.O || 0);\n  const C = Number(ocean.C || 0);\n  const topics = extractTopics(text);\n\n  const isGreeting = /(^|\\s)(hi|hello|hey|how are you|what's up|good morning|good evening)/i.test(low) && text.length < 40;\n  const isPositive = /(good|calm|great|happy|better|peace|grateful|appreciate|wonderful|fantastic|awesome|excited|love|enjoy)/i.test(low);\n  const isNegative = /(low|sad|overwhelmed|anxious|stressed|tired|worried|afraid|depressed|frustrated|angry|upset|hurt|lonely|terrible|awful)/i.test(low);\n  const isQuestion = /\\?/.test(text);\n  const isReflective = /(think|wonder|reflect|meaning|purpose|life|feel like|sometimes|realize|understand|aware)/i.test(low);\n  const isAdvice = /(best way|should|recommend|suggest|how to|tip|advice|help me)/i.test(low);\n  const isSharing = text.length > 80;\n\n  if (isGreeting) {\n    const greetings = [\n      E > 0.3 ? `Hey there! Great to hear from you! How has your day been going? Anything on your mind you'd like to chat about?`\n        : A > 0.2 ? `Hello! It's really nice to connect with you. How are you doing today? I'm here whenever you're ready to share.`\n        : `Hi! Welcome — I'm glad you're here. How are things going for you today?`,\n      `Hey! Good to see you. What's been on your mind lately?`,\n      E > 0.3 ? `Hi there! Always nice to connect. What brings you here today?`\n        : `Hello. I'm here and listening. What would you like to talk about?`\n    ];\n    return applyDirectiveStyle(pick(greetings), directives, ocean);\n  }\n\n  if (isAdvice && topics.length > 0) {\n    const topic = topics[0];\n    const topicResponses = {\n      meditation: [\n        `It sounds like you already have great insight into what works for you — meditation really can be transformative. How long have you been practicing? I'd love to hear about your experience with it.`,\n        `You're absolutely right that meditation can be incredibly grounding. What type of meditation resonates most with you — guided, breath-focused, or something else?`,\n        `That's a wonderful practice to have in your toolkit. Meditation has such deep benefits for both mind and body. Do you have a regular routine, or is it more spontaneous?`\n      ],\n      exercise: [\n        `Movement really is such a powerful way to shift your energy. What kind of exercise do you find most enjoyable or effective for you?`,\n        `You're onto something important there — physical activity can be one of the best things for our wellbeing. Is there a particular type of exercise that you find works best?`\n      ],\n      sleep: [\n        `Rest is so fundamental to how we feel and function. What's your relationship with sleep been like recently?`,\n        `That's such an important area to pay attention to. Good sleep really is the foundation of wellbeing. What does your wind-down routine look like?`\n      ],\n      nature: [\n        `Being in nature really does have a special way of grounding us. What kinds of natural settings do you find most restorative?`,\n        `There's something deeply healing about connecting with the natural world. Do you get to spend time outdoors regularly?`\n      ]\n    };\n    const responses = topicResponses[topic] || [\n      `That's a really insightful perspective on ${topic}. I'd love to hear more about your experience with it. What made you realize this?`,\n      `You seem to have a thoughtful approach to ${topic}. How has this understanding shaped your daily life?`\n    ];\n    return applyDirectiveStyle(pick(responses), directives, ocean);\n  }\n\n  if (isNegative) {\n    const empathyPool = [\n      `I hear you, and it takes real courage to share when things feel heavy.`,\n      `Thank you for being open about how you're feeling — that truly matters.`,\n      `I can sense this is weighing on you, and I want you to know your feelings are completely valid.`,\n      `It sounds like you're carrying a lot right now. I'm here to listen.`\n    ];\n    const supportPool = N < -0.2 ? [\n      `You don't have to navigate this alone — that's what I'm here for.`,\n      `Whatever you're going through, we can face it together at your pace.`,\n      `Sometimes just having someone to listen can make things feel a little lighter.`\n    ] : [\n      `Let's take this one step at a time together.`,\n      `I'm here to support you through this.`,\n      `We can work through this — there's no rush.`\n    ];\n    const followUpPool = topics.length > 0 ? [\n      `Can you tell me more about how ${topics[0]} has been affecting you?`,\n      `What aspect of ${topics[0]} has been the most challenging?`,\n      `How long have you been feeling this way about ${topics[0]}?`\n    ] : [\n      `Can you tell me more about what's been weighing on you?`,\n      `What feels like the heaviest part of what you're experiencing?`,\n      `When did you first start feeling this way?`,\n      `What would feel most helpful for us to focus on together?`\n    ];\n    return applyDirectiveStyle(`${pick(empathyPool)} ${pick(supportPool)} ${pick(followUpPool)}`, directives, ocean);\n  }\n\n  if (isPositive) {\n    const topicRef = topics.length > 0 ? topics[0] : null;\n    if (topicRef) {\n      const topicPositive = {\n        calm: [\n          `There's something really beautiful about finding that inner calm. It's not always easy to get there, so the fact that you're feeling it is worth celebrating. What's been helping you cultivate that sense of peace?`,\n          `Feeling calm is such a gift to yourself. I'm curious — is this a feeling you've been actively working toward, or did it come naturally today?`,\n          `That sense of calm sounds really grounding. What does it feel like in your body when you notice that stillness?`\n        ],\n        meditation: [\n          `It sounds like your meditation practice is really paying off! That calm energy you're describing is exactly what consistent practice can bring. How has your practice evolved over time?`,\n          `The peace that comes from meditation is so unique — it's like a calm that comes from within rather than from circumstances. What drew you to meditation in the first place?`\n        ],\n        gratitude: [\n          `That spirit of gratitude you're expressing is really powerful. Research shows that noticing what we're thankful for literally rewires the brain toward positivity. What are you most grateful for today?`,\n          `I love that you're in a space of appreciation right now. Gratitude has such a ripple effect on everything else. What's been standing out to you lately?`\n        ],\n        energy: [\n          `I can really feel that energy coming through! There's something contagious about that kind of vitality. What's been fueling it?`,\n          `That vibrant energy is wonderful. It sounds like you're really in a flow state. What's been driving that motivation?`\n        ],\n        connection: [\n          `Those deep connections you're describing really are what make life rich. It sounds like you're in a space where you're open to that kind of vulnerability, which takes courage. What's been the most meaningful connection for you recently?`,\n          `The desire for meaningful connection is so human and so important. It sounds like you're honoring that need in yourself. What kind of connections nourish you most?`\n        ]\n      };\n      if (topicPositive[topicRef]) {\n        return applyDirectiveStyle(pick(topicPositive[topicRef]), directives, ocean);\n      }\n    }\n    const generalPositive = [\n      `That's really wonderful to hear! What's been the highlight of this positive energy for you?`,\n      `I can sense that good energy in what you're sharing! It's clear you're in a meaningful place right now. What do you think is contributing most to this feeling?`,\n      `It sounds like you're in a really good headspace. Those moments are worth savoring. Is there something specific that shifted things for you?`,\n      `What a great place to be in! I'm curious about what's been different lately that's contributing to this positive shift.`,\n      `That positivity really comes through in your words. It's inspiring. What would you say has been the biggest factor?`\n    ];\n    return applyDirectiveStyle(pick(generalPositive), directives, ocean);\n  }\n\n  if (isSharing) {\n    const shareResponses = [\n      `Thank you for sharing all of that with me — I can tell this is something you've been thinking deeply about.${topics.length > 0 ? ` The way you describe ${topics[0]} really resonates.` : ''} What feels most important to you in all of this?`,\n      `I really appreciate you opening up like this. There's a lot of depth in what you're saying.${topics.length > 0 ? ` I'm particularly struck by what you said about ${topics[0]}.` : ''} What part of this would you like to explore further?`,\n      `Wow, it sounds like there's a lot going on for you — and the self-awareness you're showing is remarkable.${topics.length > 0 ? ` Tell me more about the ${topics[0]} aspect` : ' Tell me more about what feels most significant'} — I'd love to understand better.`\n    ];\n    return applyDirectiveStyle(pick(shareResponses), directives, ocean);\n  }\n\n  if (isReflective) {\n    const reflections = [\n      `Those are really thoughtful reflections. That kind of self-awareness is genuinely valuable.${topics.length > 0 ? ` What specifically about ${topics[0]} has been on your mind?` : ' What drew you to think about this?'}`,\n      `I love that you're sitting with these deeper questions. It takes courage to look inward like that. What has this reflection been revealing to you?`,\n      `There's something really meaningful about taking the time to reflect like this. What insights have been coming up for you?`\n    ];\n    return applyDirectiveStyle(pick(reflections), directives, ocean);\n  }\n\n  if (isQuestion) {\n    const questionResponses = [\n      `That's a really thoughtful question. I think the answer is unique to each person's journey.${topics.length > 0 ? ` When it comes to ${topics[0]}, ` : ' '}What's your own intuition telling you?`,\n      `Great question! I'd love to explore that with you. What's been prompting you to think about this?`,\n      `I appreciate you asking that. Before I share my thoughts, I'm curious — what's your gut feeling on it?`\n    ];\n    return applyDirectiveStyle(pick(questionResponses), directives, ocean);\n  }\n\n  const defaults = [\n    `Thanks for sharing that with me.${topics.length > 0 ? ` I'd like to hear more about your experience with ${topics[0]}.` : ''} What feels most important to talk about right now?`,\n    `I appreciate you opening up.${topics.length > 0 ? ` ${topics[0].charAt(0).toUpperCase() + topics[0].slice(1)} sounds like something meaningful to you.` : ''} Tell me more about what's on your mind.`,\n    `That's interesting — I'd like to understand more about your perspective.${topics.length > 0 ? ` How has ${topics[0]} been part of your experience?` : ' What would be most helpful to explore together?'}`,\n    `I hear you. What you're sharing matters.${topics.length > 0 ? ` Let's talk more about ${topics[0]} — ` : ' '}What aspect would you like to dive deeper into?`\n  ];\n  return applyDirectiveStyle(pick(defaults), directives, ocean);\n}\n\nlet reply = '';\nlet genStatus = 'heuristic';\nlet genError = null;\n\ntry {\n  const apiKey = process.env.NVIDIA_API_KEY || '';\n  const apiUrl = process.env.NVIDIA_API_URL || 'https://integrate.api.nvidia.com/v1/chat/completions';\n  const model = process.env.NVIDIA_MODEL || 'google/gemma-3-12b-it';\n\n  if (apiKey && apiKey.length > 10) {\n    const sysPrompt = `You are CareLoop, a supportive, personality-aware caregiver assistant for Swiss healthcare.\\n\\nStyle directives based on the user's personality:\\n${directives.map((d,i) => `${i+1}. ${d}`).join('\\n')}\\n\\nRules:\\n- Keep responses 2-4 sentences\\n- Reference what the user specifically said\\n- Be genuine, warm, and non-generic\\n- Ask one follow-up question\\n- Never start with 'I appreciate you sharing'`;\n    const resp = await fetch(apiUrl, {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },\n      body: JSON.stringify({ model, messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: text }], temperature: 0.7, max_tokens: 200 })\n    });\n    if (resp.ok) {\n      const body = await resp.json();\n      const content = body.choices?.[0]?.message?.content;\n      if (content && content.length > 10) {\n        reply = content;\n        genStatus = 'nvidia';\n      }\n    } else {\n      genError = `API ${resp.status}`;\n    }\n  }\n} catch (e) {\n  genError = e.message;\n}\n\nif (!reply) {\n  reply = heuristicResponse(text, ocean, directives);\n}\n\nreturn [{ json: {\n  ...d,\n  reply: reply,\n  generation: {\n    api_status: genStatus,\n    error: genError,\n    directives_applied: directives,\n    topics_detected: extractTopics(text)\n  }\n}}];"
+      },
+      "id": "generate-001",
+      "name": "Generate Response",
+      "type": "n8n-nodes-base.code",
+      "position": [1000, 400],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── STEP 5: FORMAT FINAL RESPONSE ──\nconst d = $input.first().json;\n\nreturn [{ json: {\n  session_id: d.session_id || '',\n  message: {\n    role: 'assistant',\n    content: d.reply || 'How can I help you today?',\n    timestamp: new Date().toISOString()\n  },\n  personality_state: {\n    ocean: d.ocean || { O:0, C:0, E:0, A:0, N:0 },\n    stable: false,\n    confidence: d.detection?.confidence || {}\n  },\n  pipeline_status: {\n    detector: d.detection?.api_status || 'unknown',\n    generator: d.generation?.api_status || 'unknown'\n  },\n  debug: {\n    detection_error: d.detection?.error || null,\n    generation_error: d.generation?.error || null,\n    directives: d.directives || [],\n    turn_index: d.turn_index || 1\n  }\n}}];"
+      },
+      "id": "format-001",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.code",
+      "position": [1200, 400],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "respond-001",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1400, 400],
+      "typeVersion": 1.1
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ingest": {
+      "main": [
+        [
+          {
+            "node": "Detect Personality",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Personality": {
+      "main": [
+        [
+          {
+            "node": "Regulate Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Regulate Response": {
+      "main": [
+        [
+          {
+            "node": "Generate Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Response": {
+      "main": [
+        [
+          {
+            "node": "Format Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Output": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}]

@@ -1,0 +1,64 @@
+# CareLoop – DB + N8N + Next.js. One command: docker compose up
+# From repo root: docker compose --env-file CareLoop/.env -f CareLoop/infra/docker/docker-compose.yml up --build
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-careloop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-careloop}
+    volumes:
+      - careloop_pgdata:/var/lib/postgresql/data
+      - ../database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-careloop} -d ${POSTGRES_DB:-careloop}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:latest
+    environment:
+      N8N_BASIC_AUTH_ACTIVE: "false"
+      N8N_HOST: ${N8N_HOST:-0.0.0.0}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678}
+      GENERIC_TIMEZONE: Europe/Zurich
+      # Required so Code nodes can read NVIDIA_API_KEY / NVIDIA_MODEL for detector & generator
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      NVIDIA_API_URL: ${NVIDIA_API_URL:-https://integrate.api.nvidia.com/v1/chat/completions}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-google/gemma-3-12b-it}
+      MEMORY_RETRIEVAL_TOP_K: ${MEMORY_RETRIEVAL_TOP_K:-5}
+      MEMORY_EMBEDDING_MODEL: ${MEMORY_EMBEDDING_MODEL:-BAAI/bge-m3}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ../../workflows/n8n:/workflows:ro
+    ports:
+      - "5678:5678"
+    depends_on:
+      db:
+        condition: service_healthy
+
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web
+    environment:
+      N8N_WEBHOOK_URL: http://n8n:5678
+      NEXT_PUBLIC_N8N_WEBHOOK_URL: http://localhost:5678
+    volumes:
+      - ../../apps/web/src:/app/src
+    ports:
+      - "3003:3000"
+    depends_on:
+      - n8n
+
+volumes:
+  careloop_pgdata:
+  n8n_data:

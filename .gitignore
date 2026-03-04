@@ -6,9 +6,11 @@ node_modules/
 .env.local
 .env.*.local
 !.env.example
+**/credentials*.json
 
 # Build and runtime
 dist/
 .next/
 *.log
 database.sqlite
+*.tsbuildinfo

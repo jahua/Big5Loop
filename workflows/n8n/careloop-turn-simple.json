@@ -1,4 +1,5 @@
 {
+  "id": "MCb0sO5LSdZwV23i",
   "name": "CareLoop Simple (Quick) Mode",
   "nodes": [
     {
@@ -12,14 +13,15 @@
       "name": "Webhook Simple",
       "type": "n8n-nodes-base.webhook",
       "position": [0, 0],
+      "webhookId": "a1b2c3d4-simple-4000-8000-careloop00001",
       "typeVersion": 2
     },
     {
       "parameters": {
-        "jsCode": "// Simple mode: quick reply without RAG/detection. Use when frontend sends workflow: 'simple' or model_tier: 'light'.\nconst raw = $input.first().json.body || $input.first().json || {};\nconst session_id = raw.session_id || '';\nconst request_id = raw.request_id || '';\nconst msg = (raw.message || '').trim() || 'Hello';\nreturn [{ json: {\n  session_id,\n  request_id,\n  coaching_mode: 'emotional_support',\n  message: { content: `I'm here to help. (Quick mode — for detailed policy or coaching, switch to Standard or Detailed.) You said: \"${msg.slice(0, 80)}${msg.length > 80 ? '…' : ''}\"` }\n}}];"
+        "jsCode": "const raw = $input.first().json.body || $input.first().json || {};\nconst session_id = raw.session_id || '';\nconst request_id = raw.request_id || '';\nconst msg = String(raw.message || '').trim() || 'Hello';\nconst turn = Number(raw.turn_index || 1);\nconst lang = String((raw.context && raw.context.language) || 'en');\nconst canton = String((raw.context && raw.context.canton) || 'ZH').slice(0, 2);\nconst startMs = Date.now();\n\nlet reply = '', genStatus = 'heuristic', genError = null, usedModel = '';\n\ntry {\n  let apiKey = '';\n  try { apiKey = process.env.NVIDIA_API_KEY || ''; } catch(_) {}\n  if (!apiKey) try { apiKey = (typeof $env !== 'undefined' && $env.NVIDIA_API_KEY) || ''; } catch(_) {}\n  let apiUrl = '';\n  try { apiUrl = process.env.NVIDIA_API_URL || ''; } catch(_) {}\n  if (!apiUrl) try { apiUrl = (typeof $env !== 'undefined' && $env.NVIDIA_API_URL) || ''; } catch(_) {}\n  if (!apiUrl) apiUrl = 'https://integrate.api.nvidia.com/v1/chat/completions';\n  let model = '';\n  try { model = process.env.NVIDIA_MODEL || ''; } catch(_) {}\n  if (!model) try { model = (typeof $env !== 'undefined' && $env.NVIDIA_MODEL) || ''; } catch(_) {}\n  if (!model) model = 'google/gemma-3n-e4b-it';\n  usedModel = model;\n\n  if (apiKey && apiKey.length > 10) {\n    const sysPrompt = 'You are CareLoop, a warm and supportive assistant for informal caregivers in Switzerland. Reply in 2-3 sentences. Be empathetic, genuine, and ask one follow-up question. Language: ' + lang + '.';\n    const body = await this.helpers.httpRequest({\n      url: apiUrl,\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },\n      body: { model: model, messages: [{role:'user', content: sysPrompt + '\\n\\nUser: ' + msg}], temperature: 0.6, max_tokens: 150 },\n      timeout: 15000,\n      json: true\n    });\n    const c = body && body.choices && body.choices[0] && body.choices[0].message && body.choices[0].message.content;\n    if (c && c.length > 10) { reply = c; genStatus = 'nvidia'; }\n    else { genError = 'API returned empty content'; }\n  } else { genError = 'No API key'; }\n} catch(e) { genError = e.message || String(e); }\n\nif (!reply) reply = \"I'm here to listen and support you. How are you feeling today?\";\n\nconst durationMs = Math.max(0, Date.now() - startMs);\nconst nowIso = new Date().toISOString();\n\nreturn [{ json: {\n  session_id: session_id,\n  message: { role: 'assistant', content: reply, timestamp: nowIso },\n  personality_state: { ocean: {O:0,C:0,E:0,A:0,N:0}, stable: false, confidence: {}, ema_applied: false },\n  policy_navigation: { active: false, citations: [], grounding: { status: 'skipped' } },\n  regulation: { directives: ['Be warm, attentive, and supportive'], zurich_applied: false },\n  pipeline_status: { detector: 'skipped', generator: genStatus, verifier: 'skipped', retrieval: 'skipped', grounding: 'skipped', fact_invariance_check: 'skipped' },\n  debug: { generation_error: genError, turn_index: turn, model_tier_requested: 'light', model_tier_effective: 'light', model: usedModel },\n  coaching_mode: 'emotional_support',\n  mode_confidence: null,\n  request_id: request_id,\n  reply: reply,\n  stage_timings: [\n    { stage: 'detection', status: 'skipped', duration_ms: 0 },\n    { stage: 'routing', status: 'simple', duration_ms: 0 },\n    { stage: 'retrieval', status: 'skipped', duration_ms: 0 },\n    { stage: 'generation', status: genStatus === 'nvidia' ? 'ok' : 'fallback', duration_ms: durationMs },\n    { stage: 'grounding', status: 'skipped', duration_ms: 0 },\n    { stage: 'verification', status: 'skipped', duration_ms: 0 },\n    { stage: 'end_to_end', status: 'ok', duration_ms: durationMs }\n  ]\n}}];"
       },
       "id": "code-simple-001",
-      "name": "Simple Reply",
+      "name": "Simple LLM Call",
       "type": "n8n-nodes-base.code",
       "position": [220, 0],
       "typeVersion": 2
@@ -38,13 +40,13 @@
   ],
   "connections": {
     "Webhook Simple": {
-      "main": [[{ "node": "Simple Reply", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Simple LLM Call", "type": "main", "index": 0 }]]
     },
-    "Simple Reply": {
+    "Simple LLM Call": {
       "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
     }
   },
-  "active": false,
+  "active": true,
   "settings": { "executionOrder": "v1" },
   "meta": {},
   "tags": []

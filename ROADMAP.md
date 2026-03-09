@@ -1,7 +1,7 @@
 # CareLoop Roadmap
 
-**Version:** 1.4.1  
-**Last Updated:** 2026-03-05  
+**Version:** 1.5.0  
+**Last Updated:** 2026-03-06  
 **Scope:** Implementation roadmap aligned with `Technical-Specification-RAG-Policy-Navigation.md` (Spec v1.3.0)
 
 ### Phase 1–2 completion summary (as of 2026-03-04)
@@ -129,6 +129,7 @@ This roadmap defines a phased implementation plan for the **Adaptive Personality
 ### Phase 3 completion summary (as of 2026-03-04)
 - **DoD 1–3 met:** Structured error envelopes (API + N8N pass-through), audit JSONL + optional `audit_log` DB write, correlation IDs, optional feedback (thumbs/score), redaction policy, health check, SLO/alert doc, security and data export/delete documentation.
 - **Remaining for production:** Export/delete API with auth; workflow stage latency → `performance_metrics`; gateway (P2) and model-tier router when needed.
+- **New implementation baseline (2026-03-06):** Session-isolated routing metadata is now carried through the web app, gateway, chat route, and audit trail (`route_key`, isolation scope, history usage). A lightweight operations dashboard now exposes session review, citation quality, degraded retrieval cases, feedback signals, audit visibility, and source freshness.
 
 ### 6.1 Goals
 - Harden failure handling, logging, and audit.
@@ -138,17 +139,21 @@ This roadmap defines a phased implementation plan for the **Adaptive Personality
 ### 6.2 Tasks
 - **Failure handling:** Implement Spec §12: detector fallback (keep prior stable traits), RAG fallback (no policy, ask clarification), verifier fallback (minimal claims), timeout fallback (controlled JSON only), EMA divergence alert.
 - **Audit:** JSONL per turn with input hash, traits, retrieval IDs, citations, verifier decision (Spec §11); correlation IDs across frontend, orchestrator, DB.
+- **Session-isolated routing:** Carry `route_key`, isolation scope, and history-usage metadata through gateway/chat responses and persist them in audit records so emotional, educational, policy, and mixed turns remain traceable.
 - **Redaction:** Pseudonymized IDs in logs; no raw sensitive content in analytics (Spec §5, §17.4).
 - **Gateway (optional but recommended):** Session lifecycle, correlation IDs, authN/authZ, rate limits, routing; shadow mode first (Spec §15.1.A, §15.1.G).
 - **Model-tier router:** Light / medium / heavy tiers for cost-quality tradeoff; cannot skip grounding/verification (Spec §15.1.B).
 - **Background jobs:** Corpus freshness checks, citation validity, retrieval regression suite (Spec §15.1.E).
 - **SLO monitoring:** Gateway availability ≥ 99.9%; routing p95 ≤ 50ms; retrieval timeout ≤ 2.0s; verification ≤ 1.5s (Spec §15.1.F, §17.6).
+- **Operations dashboard:** Add a pilot-facing dashboard for session review, citation coverage, degraded retrieval monitoring, feedback analysis, audit-trail visibility, and source freshness status.
 - **Security:** Secrets in env only; least privilege; retention/deletion aligned with Swiss FADP; consent for personality profiling (Spec §17.4).
 
 ### 6.3 Deliverables (DoD)
 - [x] All failure paths return structured responses; no raw stack traces to clients.
 - [x] Audit JSONL and correlation IDs available for every turn.
 - [x] Optional feedback signals (e.g. thumbs up/down) captured for quality monitoring.
+- [x] Session routing metadata (`route_key`, isolation scope, history usage) captured in gateway/chat/audit path for observability.
+- [x] Lightweight operations dashboard available in the web app for pilot and research monitoring.
 - [ ] If gateway is enabled: rollout plan followed (shadow → canary); success gate: no critical hallucination increase, stable or better benchmark scores (Spec §15.1.G).
 
 ---
@@ -191,6 +196,8 @@ This roadmap defines a phased implementation plan for the **Adaptive Personality
 
 ## 9. Roadmap Changelog
 
+- **1.5.0:** Codified three pipeline invariants (Spec §4.6): (1) OCEAN detection + regulation always run for every mode, (2) retrieval is conditional, (3) grounding verification mandatory for factual/policy content. Implemented hybrid LLM router (Spec §4.7) with confidence threshold, heuristic fallback, caching, and hard safety overrides. N8N workflow V2 (`careloop-phase1-2-postgres-mvp-v2.json`) now consumes `routing_hints.target_mode` from the API. API route enforces invariants with diagnostic flags (`ocean_detection_skipped`, `regulation_skipped`, `grounding_check`).
+- **1.4.2:** Added implemented OpenClaw-inspired session isolation and routing metadata flow (`route_key`, isolation scope, history usage) across web → gateway → chat → audit, plus a web operations dashboard for session review, citation quality, degraded retrieval, feedback analysis, audit visibility, and source freshness monitoring. Updated roadmap timestamp.
 - **1.4.1:** Roadmap progress sync based on implementation evidence from `docs/PHASE1-2-TODO.md` and `docs/PHASE3-TODO.md`. Marked Phase 1 golden regression tests as completed and Phase 2 RAG degraded fallback DoD as completed. Updated roadmap timestamp.
 - **1.4.0:** Routing/intent/mode design doc (`docs/ROUTING-AND-INTENT-DESIGN.md`): clean separation — intent in N8N workflow (authoritative), model tier in gateway, workflow selection in gateway, API fallback demoted and renamed. Updated gateway, model-tier, two-workflows docs with cross-references. Phase 3 report §2.10 added. N8N `Enhanced Regulation` upgraded toward Spec §8.4.F with normalized thresholds, tie-break rules, and low-confidence clarification metadata. N8N now consumes `context.model_tier` with policy safety escalation (`light`→`medium`), dynamic retrieval top-k, and tier-aware generation params. Added stale citation detector job (`npm run job:stale-citation`) and source recrawl/re-embedding baseline job (`npm run job:source-recrawl`) with JSONL telemetry. Added gateway baseline capture (`npm run job:gateway-baseline-capture`), canary gate script (`npm run job:gateway-canary-check`), and gateway shadow response logging.
 - **1.3.0:** P2 gateway (shadow, optional auth `GATEWAY_API_KEY`, rate limit `GATEWAY_RATE_LIMIT_PER_MINUTE`, model_tier pass-through); model-tier router design (`docs/MODEL-TIER-ROUTER-DESIGN.md`); background jobs design + corpus-freshness script (`npm run job:corpus-freshness`); Phase 4 pilot checklist and pillar test matrix execution guide; Phase 3 report updated; stage latency / performance_metrics note in SLO doc.

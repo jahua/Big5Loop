@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import type { Message } from "./types";
+import type { Message, HumanRating } from "./types";
 import MarkdownContent from "./MarkdownContent";
 import PipelineInfo from "./PipelineInfo";
+import ResponseRating from "./ResponseRating";
 
 function formatTime(iso?: string): string {
   if (!iso) return "";
@@ -23,6 +24,8 @@ type ChatMessageProps = {
   feedback?: "up" | "down";
   onFeedback?: (index: number, thumbs: "up" | "down") => void;
   showThanks?: boolean;
+  rating?: HumanRating | null;
+  onRate?: (index: number, rating: HumanRating) => void;
 };
 
 export default function ChatMessage({
@@ -31,6 +34,8 @@ export default function ChatMessage({
   feedback,
   onFeedback,
   showThanks = false,
+  rating,
+  onRate,
 }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
@@ -106,6 +111,14 @@ export default function ChatMessage({
             </span>
           )}
         </div>
+      )}
+
+      {/* Human rating */}
+      {canFeedback && onRate && (
+        <ResponseRating
+          onSubmit={(r) => onRate(index, r)}
+          submitted={rating}
+        />
       )}
 
       {/* Pipeline metadata */}

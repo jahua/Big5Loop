@@ -1,0 +1,28 @@
+# CareLoop Next.js app – production build for deployment
+# Build: docker build -f infra/docker/Dockerfile.web.production -t careloop-web:prod .
+# Run: docker run -p 3000:3000 --env-file .env careloop-web:prod
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy root package files for workspace resolution
+COPY package.json package-lock.json ./
+
+# Copy workspace packages
+COPY packages/contracts ./packages/contracts
+COPY apps/web ./apps/web
+
+# Install dependencies and build
+RUN npm ci --include-workspace-root --no-audit --no-fund \
+  && npm run build --workspace=@careloop/contracts \
+  && npm run build --workspace=web
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+WORKDIR /app/apps/web
+
+EXPOSE 3000
+
+CMD ["npm", "run", "start", "--", "--hostname", "0.0.0.0"]

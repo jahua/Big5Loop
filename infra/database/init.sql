@@ -1,12 +1,36 @@
 -- CareLoop Phase 0 schema per Technical Specification §9
 -- Run once on fresh PostgreSQL (e.g. docker exec or init volume)
 
+-- ── Users (simple email/password auth) ──
+CREATE TABLE IF NOT EXISTS users (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email          TEXT UNIQUE NOT NULL,
+  password_hash  TEXT NOT NULL,
+  display_name   TEXT,
+  locale         TEXT DEFAULT 'de',
+  canton         CHAR(2),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS chat_sessions (
   session_id   UUID PRIMARY KEY,
+  user_id      UUID REFERENCES users(id),
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   status       TEXT NOT NULL DEFAULT 'active',
   locale       TEXT,
   canton       CHAR(2)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON chat_sessions(user_id);
+
+-- ── Stable cross-session personality profile per user ──
+CREATE TABLE IF NOT EXISTS user_personality_profiles (
+  user_id        UUID PRIMARY KEY REFERENCES users(id),
+  ocean_scores   JSONB NOT NULL DEFAULT '{"O":0,"C":0,"E":0,"A":0,"N":0}',
+  confidence     JSONB NOT NULL DEFAULT '{"O":0,"C":0,"E":0,"A":0,"N":0}',
+  total_turns    INT NOT NULL DEFAULT 0,
+  stable         BOOLEAN NOT NULL DEFAULT false,
+  last_updated   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS conversation_turns (
@@ -98,6 +122,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   turn_index INT NOT NULL,
   coaching_mode TEXT,
   pipeline_status JSONB DEFAULT '{}'::jsonb,
+  routing JSONB DEFAULT '{}'::jsonb,
   personality JSONB,
   retrieval_ids TEXT[],
   citation_count INT,
@@ -106,6 +131,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
   turn_latency_ms INT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS routing JSONB DEFAULT '{}'::jsonb;
 CREATE INDEX IF NOT EXISTS idx_audit_log_session_turn ON audit_log(session_id, turn_index);
 CREATE INDEX IF NOT EXISTS idx_audit_log_request ON audit_log(request_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);

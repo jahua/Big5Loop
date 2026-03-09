@@ -6,6 +6,8 @@ import type {
   HealthStatus,
   AgentInfo,
   PersonalitySnapshot,
+  SessionRouting,
+  HumanRating,
 } from "@/components/types";
 
 const DEFAULT_AGENTS: AgentInfo[] = [
@@ -24,9 +26,11 @@ type ChatStore = {
   error: string | null;
   personality: PersonalityState;
   coachingMode: string | null;
+  sessionRouting: SessionRouting | null;
   chatMode: ChatMode;
   healthStatus: HealthStatus;
   feedbackByIndex: Record<number, "up" | "down">;
+  ratingsByIndex: Record<number, HumanRating>;
   agents: AgentInfo[];
   activeTab: "chat" | "personality" | "agents";
   splashDone: boolean;
@@ -40,10 +44,12 @@ type ChatStore = {
   setPersonality: (ps: PersonalityState) => void;
   addPersonalitySnapshot: (ocean: Record<string, number>) => void;
   setCoachingMode: (mode: string | null) => void;
+  setSessionRouting: (routing: SessionRouting | null) => void;
   setChatMode: (mode: ChatMode) => void;
   setHealthStatus: (status: HealthStatus) => void;
   setFeedback: (index: number, thumbs: "up" | "down") => void;
   clearFeedback: (index: number) => void;
+  setRating: (index: number, rating: HumanRating) => void;
   setAgents: (agents: AgentInfo[]) => void;
   updateAgentStatus: (name: string, status: AgentInfo["status"]) => void;
   setActiveTab: (tab: "chat" | "personality" | "agents") => void;
@@ -59,9 +65,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   error: null,
   personality: null,
   coachingMode: null,
+  sessionRouting: null,
   chatMode: "standard",
   healthStatus: "unknown",
   feedbackByIndex: {},
+  ratingsByIndex: {},
   agents: DEFAULT_AGENTS,
   activeTab: "chat",
   splashDone: false,
@@ -92,6 +100,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       };
     }),
   setCoachingMode: (mode) => set({ coachingMode: mode }),
+  setSessionRouting: (routing) => set({ sessionRouting: routing }),
   setChatMode: (mode) => set({ chatMode: mode }),
   setHealthStatus: (status) => set({ healthStatus: status }),
   setFeedback: (index, thumbs) =>
@@ -102,6 +111,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       delete next[index];
       return { feedbackByIndex: next };
     }),
+  setRating: (index, rating) =>
+    set((s) => ({ ratingsByIndex: { ...s.ratingsByIndex, [index]: rating } })),
   setAgents: (agents) => set({ agents }),
   updateAgentStatus: (name, status) =>
     set((s) => ({
@@ -115,7 +126,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       messages: [],
       personality: null,
       coachingMode: null,
+      sessionRouting: null,
       feedbackByIndex: {},
+      ratingsByIndex: {},
       error: null,
       agents: DEFAULT_AGENTS,
     }),

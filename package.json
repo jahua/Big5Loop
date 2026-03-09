@@ -23,6 +23,8 @@
     "job:gateway-canary-check": "node scripts/gateway-canary-check.js",
     "job:retrieval-smoke": "node scripts/retrieval-regression-smoke.js",
     "job:retrieval-regression": "node scripts/retrieval-regression-runner.js",
+    "job:phase4-benchmark-expansion": "node scripts/retrieval-regression-runner.js scripts/fixtures/phase4-benchmark-expansion.json",
+    "job:phase4-latency-benchmark": "node scripts/retrieval-regression-runner.js scripts/fixtures/phase4-latency-cases.json",
     "job:phase4-load-test": "node scripts/phase4-load-test.js"
   },
   "dependencies": {

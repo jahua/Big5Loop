@@ -16,6 +16,14 @@ export type AuditTurnPayload = {
   turn_index: number;
   coaching_mode: string;
   pipeline_status: Record<string, string>;
+  routing?: {
+    route_key?: string;
+    isolation_scope?: string;
+    resolved_mode?: string;
+    history_turns_used?: number;
+    history_filtered?: boolean;
+    workflow?: string;
+  };
   /** Traits summary (no PII); ocean keys only */
   personality?: { ocean?: Record<string, number>; stable?: boolean };
   /** Citation/source ids for policy turns */
@@ -60,12 +68,22 @@ export type BuildAuditOptions = {
  */
 export function buildAuditPayload(
   data: Record<string, unknown>,
-  body: { session_id?: string; turn_index?: number; message?: string },
+  body: {
+    session_id?: string;
+    turn_index?: number;
+    message?: string;
+    routing_hints?: {
+      route_key?: string;
+      isolation_scope?: string;
+      workflow?: string;
+    };
+  },
   options?: BuildAuditOptions
 ): AuditTurnPayload {
   const pipeline_status = (data.pipeline_status as Record<string, string>) ?? {};
   const personality_state = data.personality_state as Record<string, unknown> | undefined;
   const policy_nav = data.policy_navigation as { citations?: Array<{ source_id?: string }> } | undefined;
+  const session_routing = data.session_routing as Record<string, unknown> | undefined;
   const citations = policy_nav?.citations ?? [];
   const retrieval_ids = citations.map((c) => String(c?.source_id ?? "")).filter(Boolean);
 
@@ -81,6 +99,35 @@ export function buildAuditPayload(
       retrieval: pipeline_status.retrieval ?? "skipped",
       fact_invariance_check: pipeline_status.fact_invariance_check ?? "skipped",
     },
+    routing:
+      session_routing || body?.routing_hints
+        ? {
+            route_key:
+              typeof session_routing?.route_key === "string"
+                ? session_routing.route_key
+                : body?.routing_hints?.route_key,
+            isolation_scope:
+              typeof session_routing?.isolation_scope === "string"
+                ? session_routing.isolation_scope
+                : body?.routing_hints?.isolation_scope,
+            resolved_mode:
+              typeof session_routing?.resolved_mode === "string"
+                ? session_routing.resolved_mode
+                : String(data.coaching_mode ?? "emotional_support"),
+            history_turns_used:
+              typeof session_routing?.history_turns_used === "number"
+                ? session_routing.history_turns_used
+                : undefined,
+            history_filtered:
+              typeof session_routing?.history_filtered === "boolean"
+                ? session_routing.history_filtered
+                : undefined,
+            workflow:
+              typeof session_routing?.workflow === "string"
+                ? session_routing.workflow
+                : body?.routing_hints?.workflow,
+          }
+        : undefined,
     personality: personality_state
       ? {
           ocean: personality_state.ocean as Record<string, number> | undefined,

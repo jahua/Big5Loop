@@ -1,0 +1,76 @@
+# CareLoop – Production deploy (binds web to 127.0.0.1 for Nginx reverse proxy)
+# Usage: docker compose --env-file .env -f infra/docker/docker-compose.deploy.yml up --build -d
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-careloop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-careloop}
+    volumes:
+      - careloop_pgdata:/var/lib/postgresql/data
+      - ../database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-careloop} -d ${POSTGRES_DB:-careloop}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:latest
+    environment:
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-}
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://n8n:5678}
+      GENERIC_TIMEZONE: Europe/Zurich
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_RUNNERS_MODE: "internal"
+      N8N_API_KEY: ${N8N_API_KEY:-careloop-dev-api-key}
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      NVIDIA_API_URL: ${NVIDIA_API_URL:-https://integrate.api.nvidia.com/v1/chat/completions}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-google/gemma-3n-e4b-it}
+      MEMORY_RETRIEVAL_TOP_K: ${MEMORY_RETRIEVAL_TOP_K:-5}
+      MEMORY_EMBEDDING_MODEL: ${MEMORY_EMBEDDING_MODEL:-BAAI/bge-m3}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ../../workflows/n8n:/workflows:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web.production
+    environment:
+      NODE_ENV: production
+      N8N_WEBHOOK_URL: http://n8n:5678
+      NEXT_PUBLIC_N8N_WEBHOOK_URL: ${NEXTAUTH_URL:-https://careloop.boyig.com}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-careloop}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-careloop}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-https://careloop.boyig.com}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NVIDIA_API_URL: ${NVIDIA_API_URL:-https://integrate.api.nvidia.com/v1/chat/completions}
+      NVIDIA_MODEL: ${NVIDIA_MODEL:-google/gemma-3n-e4b-it}
+      NVIDIA_EMBED_MODEL: ${NVIDIA_EMBED_MODEL:-nvidia/nv-embedqa-e5-v5}
+      GATEWAY_SHADOW_LOG: ${GATEWAY_SHADOW_LOG:-/tmp/gateway-shadow.jsonl}
+      AUDIT_LOG_PATH: ${AUDIT_LOG_PATH:-/tmp/audit.jsonl}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - n8n
+    restart: unless-stopped
+
+volumes:
+  careloop_pgdata:
+  n8n_data:

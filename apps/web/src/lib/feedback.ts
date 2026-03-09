@@ -13,6 +13,8 @@ export type FeedbackPayload = {
   request_id?: string;
   thumbs_up_down?: "up" | "down";
   helpfulness_score?: number;
+  ratings?: { relevance: number; tone: number; personality_fit: number };
+  comment?: string;
   timestamp: string;
 };
 

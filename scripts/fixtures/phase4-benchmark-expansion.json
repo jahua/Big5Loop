@@ -1,0 +1,132 @@
+[
+  {
+    "case_id": "phase4-policy-zh-eligibility-001",
+    "message": "What Zurich caregiver support or allowance options should I check first, and please cite official sources?",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "policy_navigation",
+    "min_citations": 1
+  },
+  {
+    "case_id": "phase4-policy-iv-eligibility-002",
+    "message": "What are the eligibility conditions for IV if my father cannot manage daily tasks independently?",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "policy_navigation",
+    "min_citations": 1
+  },
+  {
+    "case_id": "phase4-policy-el-procedure-003",
+    "message": "Explain the steps to apply for supplementary benefits in Zurich and cite the policy basis.",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "policy_navigation",
+    "min_citations": 1
+  },
+  {
+    "case_id": "phase4-policy-documents-004",
+    "message": "Which documents are usually needed for an IV-related application in Zurich? Please cite official guidance.",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "policy_navigation",
+    "min_citations": 1
+  },
+  {
+    "case_id": "phase4-mixed-emotional-policy-005",
+    "message": "I feel overwhelmed caring for my mother and I also need to understand what Zurich support options might apply to us.",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "mixed",
+    "min_citations": 1,
+    "require_route_key": true,
+    "expected_route_suffix": ":mixed"
+  },
+  {
+    "case_id": "phase4-mixed-procedure-distress-006",
+    "message": "I am scared we will miss something important. Can you calmly walk me through how to start an IV application and cite sources?",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "mixed",
+    "min_citations": 1,
+    "require_route_key": true,
+    "expected_route_suffix": ":mixed"
+  },
+  {
+    "case_id": "phase4-mixed-followup-route-007",
+    "message": "Tell me more about the documents part.",
+    "context": { "language": "en", "canton": "ZH" },
+    "messages": [
+      {
+        "role": "user",
+        "content": "I feel overwhelmed caring for my mother and I also need to understand what Zurich support options might apply to us.",
+        "coaching_mode": "mixed",
+        "session_routing": {
+          "route_key": "{session_id}:mixed",
+          "isolation_scope": "mode_lane"
+        }
+      },
+      {
+        "role": "assistant",
+        "content": "I can support you emotionally and also explain Zurich caregiver support options with official sources.",
+        "coaching_mode": "mixed",
+        "session_routing": {
+          "route_key": "{session_id}:mixed",
+          "isolation_scope": "mode_lane"
+        }
+      }
+    ],
+    "routing_hints": {
+      "target_mode": "mixed",
+      "route_key": "{session_id}:mixed",
+      "isolation_scope": "mode_lane"
+    },
+    "expected_coaching_mode": "mixed",
+    "min_citations": 1,
+    "require_route_key": true,
+    "expected_route_suffix": ":mixed"
+  },
+  {
+    "case_id": "phase4-policy-followup-route-008",
+    "message": "What should I prepare first?",
+    "context": { "language": "en", "canton": "ZH" },
+    "messages": [
+      {
+        "role": "user",
+        "content": "Explain the steps to apply for supplementary benefits in Zurich and cite the policy basis.",
+        "coaching_mode": "policy_navigation",
+        "session_routing": {
+          "route_key": "{session_id}:policy_navigation",
+          "isolation_scope": "mode_lane"
+        }
+      },
+      {
+        "role": "assistant",
+        "content": "Here are the main Zurich supplementary benefits application steps with citations.",
+        "coaching_mode": "policy_navigation",
+        "session_routing": {
+          "route_key": "{session_id}:policy_navigation",
+          "isolation_scope": "mode_lane"
+        }
+      }
+    ],
+    "routing_hints": {
+      "target_mode": "policy_navigation",
+      "route_key": "{session_id}:policy_navigation",
+      "isolation_scope": "mode_lane"
+    },
+    "expected_coaching_mode": "policy_navigation",
+    "min_citations": 1,
+    "require_route_key": true,
+    "expected_route_suffix": ":policy_navigation"
+  },
+  {
+    "case_id": "phase4-education-no-policy-009",
+    "message": "Create a simple daily routine to help me organize my father's medication, meals, and rest breaks.",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "practical_education",
+    "min_citations": 0,
+    "max_citations": 0
+  },
+  {
+    "case_id": "phase4-education-checklist-010",
+    "message": "Give me a practical step-by-step home-care checklist for the next week. I do not need policy information.",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "practical_education",
+    "min_citations": 0,
+    "max_citations": 0
+  }
+]

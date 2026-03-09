@@ -14,9 +14,9 @@ const DB_URL = process.env.AUDIT_DATABASE_URL || process.env.DATABASE_URL || "";
 const INSERT_SQL = `
   INSERT INTO audit_log (
     request_id, session_id, turn_index, coaching_mode,
-    pipeline_status, personality, retrieval_ids, citation_count,
+    pipeline_status, routing, personality, retrieval_ids, citation_count,
     verifier_status, input_hash, turn_latency_ms
-  ) VALUES ($1, $2::uuid, $3, $4, $5::jsonb, $6::jsonb, $7::text[], $8, $9, $10, $11)
+  ) VALUES ($1, $2::uuid, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::text[], $9, $10, $11, $12)
 `;
 
 /** Fire-and-forget write of one audit payload to audit_log. No-op if AUDIT_DB_WRITE or DB URL unset. */
@@ -29,6 +29,7 @@ export function writeAuditToDb(payload: AuditTurnPayload): void {
     payload.turn_index ?? 0,
     payload.coaching_mode || null,
     JSON.stringify(payload.pipeline_status || {}),
+    payload.routing ? JSON.stringify(payload.routing) : null,
     payload.personality ? JSON.stringify(payload.personality) : null,
     payload.retrieval_ids && payload.retrieval_ids.length > 0 ? payload.retrieval_ids : null,
     payload.citation_count ?? null,

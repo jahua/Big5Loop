@@ -1,10 +1,12 @@
 # Technical Specification
 ## Adaptive Personality-Aware Caregiver Assistant (v1)
 
-**Spec Version:** 1.3.0  
-**Last Updated:** 2026-03-04
+**Spec Version:** 1.5.0  
+**Last Updated:** 2026-03-06
 
 ### Changelog
+- **1.5.0**: Codified three pipeline invariants: (1) OCEAN detection + regulation always run for every mode, (2) retrieval is conditional, (3) grounding verification is mandatory when factual/policy content is present. Added hybrid LLM router specification (LLM intent classification with confidence threshold, heuristic fallback, caching, and hard safety overrides). N8N workflow V2 now consumes `routing_hints.target_mode` from the API instead of re-classifying via keywords.
+- **1.4.0**: Added session-isolated routing metadata (`route_key`, isolation scope, history usage) and a pilot-facing operations dashboard specification for session review, citation quality, degraded retrieval monitoring, feedback analysis, audit visibility, and source freshness.
 - **1.3.0**: Locked runtime direction to Gemma 3 via NVIDIA/OpenAI-compatible endpoint and hybrid external memory (PostgreSQL + EMA + pgvector retrieval/write in workflow).
 - **1.2.0**: Consistency hardening, multilingual and compliance additions, edge-case handling upgrades, scalability and observability refinements, and explicit governance updates.
 - **1.1.0**: Added TypeScript-first architecture/framework/coding standards.
@@ -25,6 +27,7 @@ This document is implementation-focused and aligned with the requirements in `pm
 - Deliver grounded Swiss policy guidance with citations.
 - Separate factual policy retrieval from personality-dependent presentation style.
 - Ensure auditable, privacy-aware operation with reproducible logs and deterministic contracts.
+- Keep conversation context isolated by route lane so policy, practical, emotional, and mixed turns remain traceable and clean across long sessions.
 
 ## 3. High-Level Architecture
 
@@ -77,6 +80,32 @@ Runtime components:
 - Write compressed memory per turn after verification/output.
 - Keep retrieval scoped by `session_id`; memory snippets are contextual aids and must not bypass verifier or grounding rules.
 
+### 4.5 Session Isolation and Route Audit
+- Every turn should resolve to a deterministic `route_key` scoped to the session and resolved mode.
+- Default isolation strategy: `mode_lane`, so short follow-ups inherit only the relevant mode-specific context when possible.
+- Route metadata must be visible in response payloads and audit records.
+- Mixed turns may share the session but still require explicit route metadata for observability and replay.
+
+### 4.6 Pipeline Invariants
+
+Three rules apply to every turn regardless of coaching mode:
+
+| # | Invariant | Scope | Enforcement |
+|---|-----------|-------|-------------|
+| 1 | **OCEAN detection + regulation always run** | All modes (emotional, practical, policy, mixed) | N8N full pipeline always executes Detection → EMA → Regulation before any mode branching. API flags `ocean_detection_skipped` or `regulation_skipped` if workflow fails to provide personality state or directives. |
+| 2 | **Retrieval is conditional** | Only when factual/policy content is needed | API-side `shouldRetrieveEvidence()` gates retrieval based on resolved mode, keyword signals, and explicit policy opt-out. Emotional and purely practical turns skip retrieval. |
+| 3 | **Grounding verification is mandatory when factual/policy content is present** | `policy_navigation` and `mixed` modes | API checks citation count after response assembly. If a policy/mixed turn has 0 citations, `pipeline_status.grounding_check = "warn_no_citations"` and a warning is logged. |
+
+### 4.7 Hybrid LLM Router
+
+Intent classification uses a layered hybrid approach:
+
+1. **LLM router** (primary): structured JSON prompt at temperature 0, returning `coaching_mode`, `mode_confidence`, `needs_retrieval`, `routing_reason`. Cached per message+context key for `LLM_ROUTER_CACHE_TTL_MS`.
+2. **Confidence gate**: if LLM confidence < `LLM_ROUTER_MIN_CONFIDENCE` (default 0.5), discard LLM decision and fall through to heuristic.
+3. **Heuristic fallback**: keyword scoring + conversation-history inference when LLM is unavailable, times out, returns malformed JSON, or confidence is too low.
+4. **Hard safety override**: `shouldRetrieveEvidence()` forces retrieval-capable path for any turn with policy keywords, regardless of router source. Grounding verification cannot be skipped.
+5. **N8N integration**: workflow V2 consumes `routing_hints.target_mode` from the API and skips redundant keyword classification while keeping OCEAN detection + regulation always-run.
+
 ## 5. Non-Functional Requirements
 
 - Availability target: degrade gracefully if upstream modules fail.
@@ -104,6 +133,11 @@ Runtime components:
     "language": "en",
     "language_auto_detected": "de",
     "canton": "ZH"
+  },
+  "routing_hints": {
+    "target_mode": "policy_navigation",
+    "route_key": "uuid:policy_navigation",
+    "isolation_scope": "mode_lane"
   }
 }
 ```
@@ -174,6 +208,14 @@ Language policy:
     "verifier": "ok",
     "retrieval": "ok",
     "fact_invariance_check": "pass"
+  },
+  "session_routing": {
+    "route_key": "uuid:policy_navigation",
+    "isolation_scope": "mode_lane",
+    "resolved_mode": "policy_navigation",
+    "history_turns_used": 6,
+    "history_filtered": true,
+    "workflow": "full"
   }
 }
 ```
@@ -285,6 +327,7 @@ For each incoming turn:
 Core invariant:
 - Personality state is always updated.
 - Policy facts are never generated without evidence.
+- Session routing metadata is always attached before response/audit write so follow-up turns can reuse isolated history safely.
 
 ### C) Pillar A: Emotional Support (Personality-Regulated)
 
@@ -387,6 +430,7 @@ Recommended branch layout:
 
 - All turns:
   - `conversation_turns.mode`
+  - route metadata visible in `audit_log.routing`
   - `personality_states` row (smoothed OCEAN + confidence + stability)
 - Policy turns:
   - `policy_evidence` rows for each cited chunk
@@ -443,6 +487,7 @@ Composition constraints:
 - `personality_states(session_id, turn_index, ocean_json, confidence_json, stable, ema_alpha, created_at)`
 - `policy_evidence(session_id, turn_index, source_id, chunk_id, title, url, excerpt_hash)`
 - `performance_metrics(session_id, turn_index, stage, status, duration_ms, error_code, created_at)`
+- `audit_log(request_id, session_id, turn_index, coaching_mode, pipeline_status, routing, citation_count, verifier_status, input_hash, turn_latency_ms, created_at)`
 
 Indexes:
 - `conversation_turns(session_id, turn_index)`
@@ -476,12 +521,14 @@ Indexes:
   - detected traits/confidence,
   - retrieval ids,
   - citation list,
+  - session routing metadata (`route_key`, isolation scope, history usage),
   - verifier decision,
   - final status.
 - Correlation IDs across frontend, orchestrator, and DB writes.
 - Redaction rules for personal names and contact details before long-term storage.
 - Optional post-turn feedback signals (`thumbs_up_down`, `helpfulness_score`) should be captured for quality monitoring.
 - Anomaly monitoring should include sudden trait-shift alerts, repeated retrieval failures, and citation-missing alerts in policy mode.
+- A lightweight operations dashboard should surface session review, citation coverage, degraded retrieval cases, audit visibility, feedback signals, and source freshness.
 
 ## 12. Failure Handling
 
@@ -558,7 +605,12 @@ Minimum gateway request envelope:
   "user_id": "pseudonymous-id",
   "message": "text",
   "context": {"canton": "ZH", "language": "en"},
-  "routing_hints": {"force_policy_mode": false}
+  "routing_hints": {
+    "force_policy_mode": false,
+    "target_mode": "policy_navigation",
+    "route_key": "uuid:policy_navigation",
+    "isolation_scope": "mode_lane"
+  }
 }
 ```
 
@@ -635,6 +687,27 @@ Success gate for full rollout:
 - no critical hallucination increase,
 - stable or improved policy benchmark scores,
 - reduced average inference cost at equal or better user-rated quality.
+
+### H) Session-Isolated Route Lanes
+
+Adopt a route-lane model for follow-up handling:
+- `route_key = session_id + ":" + resolved_mode`
+- default isolation scope: `mode_lane`
+- gateway and chat API must forward recent messages plus route metadata
+- short/ambiguous follow-ups should consult the active route lane before falling back to whole-session history
+
+Audit requirement:
+- persist `route_key`, isolation scope, workflow, and history usage in audit output
+
+### I) Operations Dashboard
+
+Expose a lightweight operations dashboard in the web app for pilot and research use:
+- session review (recent sessions, mode, route key, verifier/retrieval status)
+- citation quality and retrieval status mix
+- degraded retrieval monitoring
+- user feedback analysis
+- audit-trail visibility
+- source freshness monitoring from corpus tables
 
 ## 15.2 Architecture, Framework, and Coding Standards (TypeScript-First)
 

@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
 import { motion, AnimatePresence } from "framer-motion";
 import { useChatStore } from "@/store/chat";
 import ChatMessage from "@/components/ChatMessage";
@@ -14,7 +15,10 @@ import StatusDot from "@/components/StatusDot";
 import ConversationStarters from "@/components/ConversationStarters";
 import SplashScreen from "@/components/SplashScreen";
 import AgentsDashboard from "@/components/AgentsDashboard";
-import PipelineInfo from "@/components/PipelineInfo";
+import OperationsDashboard from "@/components/OperationsDashboard";
+import SettingsPage from "@/components/SettingsPage";
+import PersonalityPage from "@/components/PersonalityPage";
+import AuditPage from "@/components/AuditPage";
 import type { Message, HealthStatus } from "@/components/types";
 import { fetchSessionHistory } from "@/lib/api";
 import { touchRecentSession } from "@/lib/session-storage";
@@ -40,18 +44,40 @@ const useGateway =
 export default function ChatPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { user: authUser } = useAuth();
 
   const store = useChatStore();
   const {
-    sessionId, messages, input, loading, error, personality, coachingMode,
-    chatMode, healthStatus, feedbackByIndex, agents, activeTab, splashDone,
+    sessionId, messages, input, loading, error, personality, coachingMode, sessionRouting,
+    chatMode, healthStatus, feedbackByIndex, ratingsByIndex, agents, splashDone,
   } = store;
 
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [feedbackThankIndex, setFeedbackThankIndex] = useState<number | null>(null);
   const [streamingText, setStreamingText] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [panelTab, setPanelTab] = useState<"traits" | "insights" | "agents">("traits");
+  const [panelTab, setPanelTab] = useState<"traits" | "ops">("traits");
+  const [activePage, setActivePage] = useState<"chat" | "settings" | "personality" | "audit">("chat");
+  const profileLoadedRef = useRef(false);
+
+  /* ── Load stable personality profile for logged-in user ── */
+  useEffect(() => {
+    if (!authUser || profileLoadedRef.current || personality) return;
+    profileLoadedRef.current = true;
+    fetch("/api/personality/profile")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.profile?.ocean_scores) {
+          store.setPersonality({
+            ocean: data.profile.ocean_scores,
+            stable: data.profile.stable,
+            ema_applied: true,
+            confidence_scores: data.profile.confidence,
+          });
+        }
+      })
+      .catch(() => {});
+  }, [authUser, personality, store]);
 
   /* ── Session init ── */
   useEffect(() => {
@@ -135,7 +161,13 @@ export default function ChatPage() {
     if (!msgText || !sessionId) return;
     const startedAt = Date.now();
     store.setInput("");
-    store.addMessage({ role: "user", content: msgText, timestamp: new Date().toISOString() });
+    store.addMessage({
+      role: "user",
+      content: msgText,
+      timestamp: new Date().toISOString(),
+      coaching_mode: coachingMode ?? undefined,
+      session_routing: sessionRouting ?? undefined,
+    });
     store.setLoading(true);
     store.setError(null);
 
@@ -149,20 +181,36 @@ export default function ChatPage() {
       const recentMessages = messages.slice(-10).map((m) => ({
         role: m.role,
         content: m.content,
+        coaching_mode: m.coaching_mode,
+        session_routing: m.session_routing,
       }));
 
       const url = useGateway ? "/api/gateway/chat" : "/api/chat";
+      const routing_hints = {
+        model_tier: modelTier,
+        route_key: sessionRouting?.route_key,
+        target_mode:
+          coachingMode === "emotional_support" ||
+          coachingMode === "practical_education" ||
+          coachingMode === "policy_navigation" ||
+          coachingMode === "mixed"
+            ? coachingMode
+            : undefined,
+        isolation_scope: "mode_lane" as const,
+        ...(chatMode === "simple" ? { workflow: "simple" as const } : {}),
+      };
       const body = useGateway
         ? {
             session_id: sessionId, turn_index: turnIndex, message: msgText,
             messages: recentMessages,
             context: { language: "en", canton: "ZH" },
-            routing_hints: { model_tier: modelTier, ...(chatMode === "simple" ? { workflow: "simple" as const } : {}) },
+            routing_hints,
           }
         : {
             session_id: sessionId, turn_index: turnIndex, message: msgText,
             messages: recentMessages,
             context: { language: "en", canton: "ZH", model_tier: modelTier },
+            routing_hints,
             workflow: chatMode === "simple" ? "simple" : undefined,
           };
 
@@ -217,11 +265,32 @@ export default function ChatPage() {
           timestamp: new Date().toISOString(),
           latency_ms: latencyMs,
           citations: citations?.length ? citations : undefined,
+          coaching_mode: typeof data?.coaching_mode === "string" ? data.coaching_mode : undefined,
+          session_routing:
+            data?.session_routing && typeof data.session_routing === "object"
+              ? data.session_routing
+              : undefined,
           pipeline: {
             mode_confidence: typeof data?.mode_confidence === "number" ? data.mode_confidence : undefined,
             mode_routing_reason: typeof data?.mode_routing_reason === "string" ? data.mode_routing_reason : undefined,
             pipeline_status: pipelineStatus,
             stage_timings: stageTimings,
+            route_key:
+              data?.session_routing && typeof data.session_routing?.route_key === "string"
+                ? data.session_routing.route_key
+                : undefined,
+            isolation_scope:
+              data?.session_routing && typeof data.session_routing?.isolation_scope === "string"
+                ? data.session_routing.isolation_scope
+                : undefined,
+            history_turns_used:
+              data?.session_routing && typeof data.session_routing?.history_turns_used === "number"
+                ? data.session_routing.history_turns_used
+                : undefined,
+            history_filtered:
+              data?.session_routing && typeof data.session_routing?.history_filtered === "boolean"
+                ? data.session_routing.history_filtered
+                : undefined,
           },
         };
 
@@ -234,17 +303,32 @@ export default function ChatPage() {
           stable?: boolean;
           ema_applied?: boolean;
           confidence_scores?: Record<string, number>;
+          confidence?: Record<string, number>;
         };
         const newPs = {
           ocean: ps.ocean ?? {},
           stable: ps.stable,
           ema_applied: ps.ema_applied,
-          confidence_scores: ps.confidence_scores,
+          confidence_scores: ps.confidence_scores ?? ps.confidence,
         };
         store.setPersonality(newPs);
         if (ps.ocean) store.addPersonalitySnapshot(ps.ocean);
+
+        if (authUser && ps.ocean) {
+          fetch("/api/personality/profile", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ocean: ps.ocean,
+              confidence: ps.confidence_scores ?? ps.confidence ?? {},
+            }),
+          }).catch(() => {});
+        }
       }
       if (data?.coaching_mode) store.setCoachingMode(data.coaching_mode);
+      if (data?.session_routing && typeof data.session_routing === "object") {
+        store.setSessionRouting(data.session_routing);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Request failed";
       store.setError(msg);
@@ -258,7 +342,7 @@ export default function ChatPage() {
         }
       }, 2000);
     }
-  }, [input, sessionId, messages.length, chatMode, store, typewriterReveal]);
+  }, [input, sessionId, messages, chatMode, coachingMode, sessionRouting, store, typewriterReveal, authUser]);
 
   /* ── Feedback ── */
   const sendFeedback = useCallback(
@@ -285,6 +369,39 @@ export default function ChatPage() {
       }
     },
     [messages, sessionId, feedbackByIndex, store]
+  );
+
+  const sendRating = useCallback(
+    async (messageIndex: number, rating: import("@/components/types").HumanRating) => {
+      const msg = messages[messageIndex];
+      if (!msg || msg.role !== "assistant" || msg.turn_index == null || !sessionId) return;
+      if (ratingsByIndex[messageIndex]) return;
+      store.setRating(messageIndex, rating);
+      try {
+        await fetch("/api/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            turn_index: msg.turn_index,
+            request_id: msg.request_id ?? undefined,
+            ratings: {
+              relevance: rating.relevance,
+              tone: rating.tone,
+              personality_fit: rating.personality_fit,
+            },
+            comment: rating.comment,
+            context: {
+              coaching_mode: msg.coaching_mode,
+              ocean: personality?.ocean,
+            },
+          }),
+        });
+      } catch {
+        /* non-blocking */
+      }
+    },
+    [messages, sessionId, ratingsByIndex, personality, store]
   );
 
   /* ── Session navigation ── */
@@ -332,10 +449,17 @@ export default function ChatPage() {
         currentSessionId={sessionId}
         onSelectSession={handleSelectSession}
         onNewChat={handleNewChat}
+        activePage={activePage}
+        onNavigate={setActivePage}
       />
 
-      {/* ── Center ── */}
-      <main className="careloop-center">
+      {/* ── Non-chat pages ── */}
+      {activePage === "settings" && <SettingsPage />}
+      {activePage === "personality" && <PersonalityPage />}
+      {activePage === "audit" && <AuditPage />}
+
+      {/* ── Center (chat) ── */}
+      {activePage === "chat" && <main className="careloop-center">
         {/* Toolbar */}
         <div className="careloop-toolbar">
           <StatusDot status={healthStatus} />
@@ -359,6 +483,16 @@ export default function ChatPage() {
             {coachingMode && (
               <span className="careloop-badge careloop-badge--mode">
                 {coachingMode.replace(/_/g, " ")}
+              </span>
+            )}
+            {sessionRouting?.route_key && (
+              <span className="careloop-badge careloop-badge--stable" title={sessionRouting.route_key}>
+                Route {sessionRouting.route_key.split(":").slice(-1)[0]}
+              </span>
+            )}
+            {sessionRouting?.isolation_scope && (
+              <span className="careloop-badge careloop-badge--learning">
+                {sessionRouting.isolation_scope.replace(/_/g, " ")}
               </span>
             )}
           </div>
@@ -423,6 +557,8 @@ export default function ChatPage() {
                   feedback={feedbackByIndex[i]}
                   onFeedback={sendFeedback}
                   showThanks={feedbackThankIndex === i}
+                  rating={ratingsByIndex[i] ?? null}
+                  onRate={sendRating}
                 />
               </motion.div>
             ))}
@@ -466,10 +602,10 @@ export default function ChatPage() {
           disabled={loading}
           placeholder="Type a message…"
         />
-      </main>
+      </main>}
 
-      {/* ── Right panel (tabbed) ── */}
-      <aside className="careloop-panel">
+      {/* ── Right panel (tabbed, chat only) ── */}
+      {activePage === "chat" && <aside className="careloop-panel">
         <div className="careloop-panel__tabs">
           <button
             type="button"
@@ -480,17 +616,10 @@ export default function ChatPage() {
           </button>
           <button
             type="button"
-            className={`careloop-panel__tab ${panelTab === "insights" ? "careloop-panel__tab--active" : ""}`}
-            onClick={() => setPanelTab("insights")}
+            className={`careloop-panel__tab ${panelTab === "ops" ? "careloop-panel__tab--active" : ""}`}
+            onClick={() => setPanelTab("ops")}
           >
-            Insights
-          </button>
-          <button
-            type="button"
-            className={`careloop-panel__tab ${panelTab === "agents" ? "careloop-panel__tab--active" : ""}`}
-            onClick={() => setPanelTab("agents")}
-          >
-            Agents
+            Ops
           </button>
         </div>
 
@@ -498,17 +627,16 @@ export default function ChatPage() {
           {panelTab === "traits" && (
             <>
               <PersonalityPanel personality={personality} />
+              <PersonalityInsights personality={personality} />
+              <AgentsDashboard agents={agents} />
               <DataActions sessionId={sessionId} onDeleted={handleDataDeleted} />
             </>
           )}
-          {panelTab === "insights" && (
-            <PersonalityInsights personality={personality} />
-          )}
-          {panelTab === "agents" && (
-            <AgentsDashboard agents={agents} />
+          {panelTab === "ops" && (
+            <OperationsDashboard />
           )}
         </div>
-      </aside>
+      </aside>}
     </div>
   );
 }

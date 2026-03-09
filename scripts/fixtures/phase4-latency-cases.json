@@ -1,0 +1,38 @@
+[
+  {
+    "case_id": "latency-policy-001",
+    "message": "Explain the steps to apply for supplementary benefits in Zurich and cite the policy basis.",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "policy_navigation",
+    "min_citations": 1,
+    "max_elapsed_ms": 15000,
+    "max_retrieval_ms": 10000
+  },
+  {
+    "case_id": "latency-mixed-002",
+    "message": "I feel overwhelmed caring for my mother and I also need to understand what Zurich support options might apply to us.",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "mixed",
+    "min_citations": 1,
+    "max_elapsed_ms": 15000,
+    "max_retrieval_ms": 6000
+  },
+  {
+    "case_id": "latency-education-003",
+    "message": "Create a simple daily routine to help me organize my father's medication, meals, and rest breaks.",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "practical_education",
+    "min_citations": 0,
+    "max_citations": 0,
+    "max_elapsed_ms": 12000
+  },
+  {
+    "case_id": "latency-education-optout-004",
+    "message": "Give me a practical step-by-step home-care checklist for the next week. I do not need policy information.",
+    "context": { "language": "en", "canton": "ZH" },
+    "expected_coaching_mode": "practical_education",
+    "min_citations": 0,
+    "max_citations": 0,
+    "max_elapsed_ms": 12000
+  }
+]

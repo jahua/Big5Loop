@@ -110,11 +110,23 @@ export async function POST(request: NextRequest) {
     session_id?: string;
     user_id?: string;
     message?: string;
+    messages?: Array<{
+      role?: string;
+      content?: string;
+      coaching_mode?: string;
+      session_routing?: {
+        route_key?: string;
+        isolation_scope?: "mode_lane" | "session";
+      };
+    }>;
     context?: { canton?: string; language?: string };
     routing_hints?: {
       force_policy_mode?: boolean;
       model_tier?: "light" | "medium" | "heavy";
       workflow?: "simple";
+      target_mode?: "emotional_support" | "practical_education" | "policy_navigation" | "mixed";
+      route_key?: string;
+      isolation_scope?: "mode_lane" | "session";
     };
     turn_index?: number;
   };
@@ -171,9 +183,15 @@ export async function POST(request: NextRequest) {
     session_id: sessionId,
     turn_index: body?.turn_index ?? 1,
     message,
+    messages: Array.isArray(body?.messages) ? body.messages : undefined,
     context: {
       ...(body?.context ?? { language: "en", canton: "ZH" }),
       model_tier: validTier,
+    },
+    routing_hints: {
+      ...(body?.routing_hints ?? {}),
+      model_tier: validTier,
+      workflow: useSimpleWorkflow ? "simple" as const : undefined,
     },
     ...(useSimpleWorkflow ? { workflow: "simple" as const } : {}),
   };

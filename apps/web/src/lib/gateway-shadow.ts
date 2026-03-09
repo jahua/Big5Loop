@@ -18,6 +18,9 @@ export type GatewayEnvelope = {
     force_policy_mode?: boolean;
     model_tier?: "light" | "medium" | "heavy";
     workflow?: "simple";
+    target_mode?: "emotional_support" | "practical_education" | "policy_navigation" | "mixed";
+    route_key?: string;
+    isolation_scope?: "mode_lane" | "session";
   };
 };
 

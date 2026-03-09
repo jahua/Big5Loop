@@ -18,9 +18,10 @@ Phase 1: MVP dialogue loop (Detection stub → EMA → Mode stub → Build Respo
    cd CareLoop
    docker compose --env-file .env -f infra/docker/docker-compose.yml up --build
    ```
+   For production build: `docker compose --env-file .env -f infra/docker/docker-compose.production.yml up --build -d`
    - **PostgreSQL** → `localhost:5432`
    - **N8N** → http://localhost:5678
-   - **Next.js** → http://localhost:3003
+   - **Next.js** → http://localhost:3000
 
    Or run only DB + N8N and run the frontend locally:
    ```bash
@@ -38,7 +39,7 @@ Phase 1: MVP dialogue loop (Detection stub → EMA → Mode stub → Build Respo
    cd CareLoop && npm install && npm run dev --workspace=web
    ```
    Or from `CareLoop/apps/web`: `npm install && npm run dev`
-   - Open http://localhost:3003 (Docker) or the port Next.js prints (local dev). Send a message; Phase 1 responses include OCEAN and coaching mode.
+   - Open http://localhost:3000 (Docker) or the port Next.js prints (local dev). Send a message; Phase 1 responses include OCEAN and coaching mode.
 
 5. **Contracts (typecheck + parse check)**
    ```bash

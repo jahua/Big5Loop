@@ -27,19 +27,19 @@ This roadmap defines a phased implementation plan for the **Adaptive Personality
 
 ---
 
-## 2. High-Level Timeline (Suggested 16 Weeks)
+## 2. High-Level Timeline
 
-| Phase | Weeks | Focus |
+| Phase | Period | Focus |
 |-------|--------|--------|
-| **Phase 0** | 1–2 | Infrastructure and engineering baseline |
-| **Phase 1** | 3–6 | MVP dialogue loop (Detection → Regulation → Generation) |
-| **Phase 2** | 7–10 | RAG and policy navigation |
-| **Phase 3** | 11–13 | Reliability, observability, and security |
-| **Phase 4** | 14–16 | Pilot release and evaluation |
+| **Phase 0** | Dec 2025 (Weeks 1–2) | Infrastructure and engineering baseline |
+| **Phase 1** | Jan 2026 (Weeks 3–6) | MVP dialogue loop (Detection → Regulation → Generation) |
+| **Phase 2** | Jan–Feb 2026 (Weeks 7–10) | RAG and policy navigation |
+| **Phase 3** | Feb 2026 (Weeks 11–13) | Reliability, observability, and security |
+| **Phase 4** | Feb–Mar 2026 (Weeks 14–16) | Pilot release and evaluation |
 
 ---
 
-## 3. Phase 0: Infrastructure and Engineering Baseline (Weeks 1–2)
+## 3. Phase 0: Infrastructure and Engineering Baseline (Dec 2025, Weeks 1–2)
 
 ### 3.1 Goals
 - Establish a minimal runnable stack and dev environment.
@@ -64,7 +64,7 @@ This roadmap defines a phased implementation plan for the **Adaptive Personality
 
 ---
 
-## 4. Phase 1: MVP Dialogue Loop (Weeks 3–6)
+## 4. Phase 1: MVP Dialogue Loop (Jan 2026, Weeks 3–6)
 
 ### 4.1 Goals
 - Implement the core pipeline: **Detection → EMA → Regulation → Generation → Verification → Persistence**.
@@ -93,7 +93,7 @@ This roadmap defines a phased implementation plan for the **Adaptive Personality
 
 ---
 
-## 5. Phase 2: RAG and Policy Navigation (Weeks 7–10)
+## 5. Phase 2: RAG and Policy Navigation (Jan–Feb 2026, Weeks 7–10)
 
 ### 5.1 Goals
 - Add **Policy Navigation** pillar with RAG retrieval, citations, and grounding.
@@ -121,7 +121,7 @@ This roadmap defines a phased implementation plan for the **Adaptive Personality
 
 ---
 
-## 6. Phase 3: Reliability, Observability, and Security (Weeks 11–13)
+## 6. Phase 3: Reliability, Observability, and Security (Feb 2026, Weeks 11–13)
 
 **Implementation report:** `Big5Loop/docs/reports/Phase3-Reliability-Observability-Report.md`  
 **TODO list:** `Big5Loop/docs/PHASE3-TODO.md`
@@ -158,7 +158,7 @@ This roadmap defines a phased implementation plan for the **Adaptive Personality
 
 ---
 
-## 7. Phase 4: Pilot Release and Evaluation (Weeks 14–16)
+## 7. Phase 4: Pilot Release and Evaluation (Feb–Mar 2026, Weeks 14–16)
 
 **Checklist:** `Big5Loop/docs/PHASE4-PILOT-CHECKLIST.md` (pillar test matrix, SLO targets, benchmark audit, load test, rollout).
 

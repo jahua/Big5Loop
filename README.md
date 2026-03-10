@@ -175,13 +175,13 @@ See [docs/SECRETS-AND-CREDENTIALS.md](docs/SECRETS-AND-CREDENTIALS.md) for the f
 
 ## Roadmap
 
-| Phase | Focus | Status |
-|---|---|---|
-| Phase 0 | Infrastructure, contracts, chat shell, N8N skeleton, DB schema | ✅ Done |
-| Phase 1 | MVP dialogue loop: Detection → EMA → Mode → Generation → Response | ✅ Done |
-| Phase 2 | RAG and policy navigation with citations | ✅ Done |
-| Phase 3 | Reliability, observability, and security hardening | ✅ Done |
-| Phase 4 | Pilot release and evaluation | ✅ Done |
+| Phase | Period | Focus | Status |
+|---|---|---|---|
+| Phase 0 | Dec 2025 | Infrastructure, contracts, chat shell, N8N skeleton, DB schema | ✅ Done |
+| Phase 1 | Jan 2026 | MVP dialogue loop: Detection → EMA → Mode → Generation → Response | ✅ Done |
+| Phase 2 | Jan–Feb 2026 | RAG and policy navigation with citations | ✅ Done |
+| Phase 3 | Feb 2026 | Reliability, observability, and security hardening | ✅ Done |
+| Phase 4 | Feb–Mar 2026 | Pilot release and evaluation | ✅ Done |
 
 See [ROADMAP.md](ROADMAP.md) for detailed phase breakdowns and Definition of Done.
 

@@ -16,6 +16,10 @@ dist/
 database.sqlite
 *.tsbuildinfo
 
+# Python virtual environment
+data/venv/
+__pycache__/
+
 # Local documentation, reports, and notes
 docs/
 

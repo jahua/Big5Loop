@@ -12,13 +12,17 @@ COPY apps/web ./apps/web
 
 # Install all dependencies (workspace-aware)
 RUN npm install --workspace=web --include-workspace-root \
-  --no-audit --no-fund --prefer-offline \
+  --no-audit --no-fund \
   --fetch-retries=5 --fetch-retry-factor=2 \
   --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 \
   --fetch-timeout=300000
+
+# Build the contracts package so dist/ is up-to-date
+RUN npm run build --workspace=@big5loop/contracts
 
 WORKDIR /app/apps/web
 
 EXPOSE 3000
 ENV NODE_ENV=development
-CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]
+ENV NEXT_TELEMETRY_DISABLED=1
+CMD ["npx", "next", "dev", "--hostname", "0.0.0.0", "--turbo"]

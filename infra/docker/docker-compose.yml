@@ -52,7 +52,12 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.web
+    command: >
+      sh -c "mkdir -p /app/node_modules/@big5loop &&
+             ln -sf /app/packages/contracts /app/node_modules/@big5loop/contracts &&
+             npx next dev --hostname 0.0.0.0 --turbo"
     environment:
+      NEXT_TELEMETRY_DISABLED: "1"
       N8N_WEBHOOK_URL: http://n8n:5678
       NEXT_PUBLIC_N8N_WEBHOOK_URL: http://localhost:5678
       DATABASE_URL: postgresql://${POSTGRES_USER:-big5loop}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-big5loop}

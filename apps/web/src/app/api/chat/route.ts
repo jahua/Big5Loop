@@ -594,9 +594,9 @@ export async function POST(request: NextRequest) {
     const workflowPath =
       body?.workflow === "simple"
         ? "big5loop-turn-simple"
-        : body?.workflow === "standard"
-        ? "big5loop-turn"
-        : "big5loop-turn-personage-benchmark";
+        : body?.workflow === "benchmark"
+        ? "big5loop-turn-personage-benchmark"
+        : "big5loop-turn";
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), N8N_TIMEOUT_MS);
     const res = await fetch(`${WEBHOOK_URL}/webhook/${workflowPath}`, {

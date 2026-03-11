@@ -594,9 +594,11 @@ export async function POST(request: NextRequest) {
     const workflowPath =
       body?.workflow === "simple"
         ? "big5loop-turn-simple"
+        : body?.workflow === "standard"
+        ? "big5loop-turn"
         : body?.workflow === "benchmark"
         ? "big5loop-turn-personage-benchmark"
-        : "big5loop-turn";
+        : "big5loop-turn-parallel-v3";
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), N8N_TIMEOUT_MS);
     const res = await fetch(`${WEBHOOK_URL}/webhook/${workflowPath}`, {
@@ -611,7 +613,7 @@ export async function POST(request: NextRequest) {
 
     if (!res.ok) {
       const n8nHint =
-        "N8N webhook not found. Import and activate big5loop-phase1-2-postgres-mvp-v2.json (or big5loop-simplified.json) in N8N. Local: http://localhost:5678. Production: use SSH tunnel (see docs/DEPLOY-TO-SERVER.md).";
+        `N8N webhook "${workflowPath}" not found. Import and activate big5loop-phase1-2-parallel-v3.json in N8N. Local: http://localhost:5678. Production: use SSH tunnel (see docs/DEPLOY-TO-SERVER.md).`;
       const message =
         res.status === 404
           ? n8nHint
